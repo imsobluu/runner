@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
+_template_cache: dict[str, Any] = {}
 
 
 @dataclass(frozen=True)
@@ -37,12 +40,16 @@ def find_template(
 
     screen_array = np.frombuffer(screenshot_png, dtype=np.uint8)
     screen = cv2.imdecode(screen_array, cv2.IMREAD_COLOR)
-    template = cv2.imread(str(template_path), cv2.IMREAD_COLOR)
-
     if screen is None:
         raise ValueError("Could not decode screenshot PNG bytes")
+
+    key = str(template_path)
+    template = _template_cache.get(key)
     if template is None:
-        raise ValueError(f"Could not read template image: {template_path}")
+        template = cv2.imread(key, cv2.IMREAD_COLOR)
+        if template is None:
+            raise ValueError(f"Could not read template image: {template_path}")
+        _template_cache[key] = template
 
     result = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
     _, max_value, _, max_location = cv2.minMaxLoc(result)
