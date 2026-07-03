@@ -29,7 +29,7 @@ _CELL_CENTERS = (
 _CROP_HALF_WIDTH = 78
 _CROP_HALF_HEIGHT = 95
 
-BANNER_TEMPLATE = Path("assets/captcha_banner.png")
+BANNER_TEMPLATE = Path(__file__).resolve().parents[1] / "assets" / "captcha_banner.png"
 
 
 @dataclass(frozen=True)
@@ -68,6 +68,10 @@ def solve_captcha(
             return True
 
         solution = _solve_round(device, frame_delay, frame_count)
+        if not solution.confident:
+            # Likely captured mid-transition. One re-capture is far cheaper
+            # than a wrong answer, which resets round progress to 3/3.
+            solution = _solve_round(device, frame_delay, frame_count)
         centers = _scaled_centers(device)
         for index in solution.outliers:
             x, y = centers[index]
@@ -95,8 +99,10 @@ def _solve_round(
     frame_count: int,
 ) -> CaptchaSolution:
     frames = _capture_cell_frames(device, frame_delay, frame_count)
-    motion = _cell_motion(frames)
+    return _pick_outliers(_cell_motion(frames))
 
+
+def _pick_outliers(motion: list[float]) -> CaptchaSolution:
     order = sorted(range(len(motion)), key=lambda i: motion[i])
     outliers = (order[0], order[1])
 
@@ -121,7 +127,7 @@ def _capture_cell_frames(
     import cv2
     import numpy as np
 
-    boxes = _scaled_boxes(device)
+    boxes: list[tuple[int, int, int, int]] | None = None
     frames: list[list[np.ndarray]] = []
     for frame_index in range(frame_count):
         if frame_index:
@@ -130,6 +136,12 @@ def _capture_cell_frames(
         screen = cv2.imdecode(array, cv2.IMREAD_GRAYSCALE)
         if screen is None:
             raise ValueError("Could not decode screenshot PNG bytes")
+        if boxes is None:
+            # Crop in screenshot pixels: screencap may return the physical
+            # resolution while `wm size` reports an override, so scale from
+            # the image itself rather than from device.screen_size().
+            height, width = screen.shape[:2]
+            boxes = _scaled_boxes(width, height)
         frames.append([screen[y1:y2, x1:x2] for (x1, y1, x2, y2) in boxes])
     return frames
 
@@ -151,13 +163,16 @@ def _scaled_centers(device: AvdDevice) -> list[tuple[int, int]]:
     return [(round(x * sx), round(y * sy)) for (x, y) in _CELL_CENTERS]
 
 
-def _scaled_boxes(device: AvdDevice) -> list[tuple[int, int, int, int]]:
-    sx, sy = _scale(device)
+def _scaled_boxes(width: int, height: int) -> list[tuple[int, int, int, int]]:
+    sx = width / REFERENCE_WIDTH
+    sy = height / REFERENCE_HEIGHT
     hw = round(_CROP_HALF_WIDTH * sx)
     hh = round(_CROP_HALF_HEIGHT * sy)
     boxes = []
-    for x, y in _scaled_centers(device):
-        boxes.append((x - hw, y - hh, x + hw, y + hh))
+    for x, y in _CELL_CENTERS:
+        cx = round(x * sx)
+        cy = round(y * sy)
+        boxes.append((cx - hw, cy - hh, cx + hw, cy + hh))
     return boxes
 
 

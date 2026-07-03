@@ -129,8 +129,10 @@ def has_template(
 ) -> bool:
     screen = device.screenshot_bytes()
     match = find_template(screen, template_path, threshold=threshold)
+    if not match and solve_captcha_if_present(device, screen):
+        # The captcha was covering the screen; re-check now that it is gone.
+        match = find_template(device.screenshot_bytes(), template_path, threshold=threshold)
     if not match:
-        solve_captcha_if_present(device, screen)
         return False
 
     print(f"{name} already visible score={match.score:.3f}")
