@@ -1,4 +1,5 @@
 import argparse
+import json
 import sys
 import threading
 from pathlib import Path
@@ -6,11 +7,21 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from avd_runner import AvdDevice, find_template, wait
-from avd_runner.recording import play_ldplayer_record, play_taps, record_taps
+from avd_runner import AvdDevice, find_template, solve_captcha, wait
+from avd_runner.recording import (
+    load_ldplayer_record,
+    load_taps,
+    play_recorded_taps,
+    record_taps,
+)
 
 
 ASSETS = REPO_ROOT / "assets"
+CAPTCHA_BANNER_TEMPLATE = ASSETS / "captcha_banner.png"
+
+# The anti-bot captcha can appear on any menu/transition screen, so every
+# screenshot-driven helper checks for it. Toggled off by --no-captcha.
+_captcha_enabled = True
 PLAY_BUTTON_TEMPLATE = ASSETS / "play_button.png"
 PLAY_WITH_DOUBLE_COINS_TEMPLATE = ASSETS / "play_with_double_coins.png"
 RANDOM_BOOST_TEMPLATE = ASSETS / "random_boost.png"
@@ -35,6 +46,24 @@ RUN_RECORDING_PATH = REPO_ROOT / "recordings" / "auto_runner.json"
 LDPLAYER_RECORDING_PATH = REPO_ROOT / "recordings" / "my_script(4).record"
 
 
+def solve_captcha_if_present(device: AvdDevice, screen: bytes) -> bool:
+    """Solve the anti-bot captcha if the given screenshot shows it.
+
+    Reuses screenshot bytes the caller already captured, so it adds no extra
+    screencaps on the common path where no captcha is present.
+    """
+    if not _captcha_enabled:
+        return False
+    if find_template(screen, CAPTCHA_BANNER_TEMPLATE, threshold=0.9) is None:
+        return False
+
+    print("Anti-bot captcha detected; solving.")
+    if not solve_captcha(device, banner_template=CAPTCHA_BANNER_TEMPLATE):
+        print("Failed to solve captcha.")
+        raise SystemExit(1)
+    return True
+
+
 def tap_template(
     device: AvdDevice,
     name: str,
@@ -44,7 +73,8 @@ def tap_template(
     delay_seconds: float = 0.5,
     save_debug: bool = False,
 ) -> bool:
-    for attempt in range(1, attempts + 1):
+    attempt = 0
+    while attempt < attempts:
         screen = device.screenshot_bytes()
         match = find_template(screen, template_path, threshold=threshold)
 
@@ -56,6 +86,12 @@ def tap_template(
             )
             return True
 
+        # A captcha covering the screen is why the template is missing; solve
+        # it and retry without spending an attempt.
+        if solve_captcha_if_present(device, screen):
+            continue
+
+        attempt += 1
         print(f"{name} not found on attempt {attempt}/{attempts}")
         wait(delay_seconds)
 
@@ -94,6 +130,7 @@ def has_template(
     screen = device.screenshot_bytes()
     match = find_template(screen, template_path, threshold=threshold)
     if not match:
+        solve_captcha_if_present(device, screen)
         return False
 
     print(f"{name} already visible score={match.score:.3f}")
@@ -108,13 +145,18 @@ def wait_for_template(
     attempts: int = 120,
     delay_seconds: float = 1.0,
 ) -> bool:
-    for attempt in range(1, attempts + 1):
+    attempt = 0
+    while attempt < attempts:
         screen = device.screenshot_bytes()
         match = find_template(screen, template_path, threshold=threshold)
         if match:
             print(f"Found {name} score={match.score:.3f}")
             return True
 
+        if solve_captcha_if_present(device, screen):
+            continue
+
+        attempt += 1
         print(f"{name} not found on attempt {attempt}/{attempts}")
         wait(delay_seconds)
 
@@ -283,6 +325,37 @@ def monitor_activate_cookie_relay(
         stop_event.wait(interval_seconds)
 
 
+def load_anchors(recording_path: Path) -> list[dict]:
+    """Load re-sync checkpoints for a recording, if any.
+
+    An anchors file lives next to the recording as `<name>.anchors.json`:
+
+        {"anchors": [
+            {"after_tap": 12, "template": "double_coins_banner.png", "timeout": 30}
+        ]}
+
+    `after_tap` is the 1-based tap index printed during recording ("Recorded
+    tap N"); playback pauses after that tap until `template` (relative to
+    assets/) is on screen, or aborts after `timeout` seconds (default 30).
+    """
+    path = recording_path.with_name(recording_path.name + ".anchors.json")
+    if not path.exists():
+        return []
+    return json.loads(path.read_text(encoding="utf-8"))["anchors"]
+
+
+def split_taps_at_anchors(taps: list, anchors: list[dict]) -> list[tuple[list, dict | None]]:
+    """Split taps into (segment, anchor) pairs; the final segment has no anchor."""
+    segments: list[tuple[list, dict | None]] = []
+    start = 0
+    for anchor in sorted(anchors, key=lambda a: a["after_tap"]):
+        end = min(max(int(anchor["after_tap"]), start), len(taps))
+        segments.append((taps[start:end], anchor))
+        start = end
+    segments.append((taps[start:], None))
+    return segments
+
+
 def run_after_start(
     device: AvdDevice,
     mode: str,
@@ -309,11 +382,30 @@ def run_after_start(
         monitor.start()
 
     if mode == "ldplayer":
-        play_ldplayer_record(device, recording_path, speed=speed, stop_event=stop_event)
+        taps = load_ldplayer_record(recording_path, target_size=device.screen_size())
     else:
-        play_taps(device, recording_path, speed=speed, stop_event=stop_event)
+        taps = load_taps(recording_path)
+
+    synced = True
+    for segment, anchor in split_taps_at_anchors(taps, load_anchors(recording_path)):
+        play_recorded_taps(device, segment, speed, stop_event=stop_event)
+        if stop_event.is_set() or anchor is None:
+            break
+        # Re-sync on the anchor before the next segment; wait_for_template
+        # also solves any captcha that popped up mid-playback.
+        if not wait_for_template(
+            device,
+            anchor["template"],
+            ASSETS / anchor["template"],
+            attempts=int(anchor.get("timeout", 30)),
+        ):
+            print(f"Anchor {anchor['template']} not found after tap {anchor['after_tap']}.")
+            synced = False
+            break
 
     stop_event.set()
+    if not synced:
+        raise SystemExit(1)
 
 
 def parse_args() -> argparse.Namespace:
@@ -345,6 +437,11 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=2.0,
         help="Seconds between activate_cookie_relay.png checks during playback.",
+    )
+    parser.add_argument(
+        "--no-captcha",
+        action="store_true",
+        help="Disable the anti-bot captcha solver run before and after gameplay.",
     )
     parser.add_argument(
         "--loop",
@@ -442,7 +539,9 @@ def run_once(device: AvdDevice, args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    global _captcha_enabled
     args = parse_args()
+    _captcha_enabled = not args.no_captcha
     device = AvdDevice.from_env()
     run_number = 1
 

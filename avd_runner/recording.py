@@ -44,7 +44,7 @@ def play_taps(
     if speed <= 0:
         raise ValueError("speed must be greater than 0")
 
-    _play_recorded_taps(device, load_taps(path), speed, stop_event=stop_event)
+    play_recorded_taps(device, load_taps(path), speed, stop_event=stop_event)
 
 
 def play_ldplayer_record(
@@ -57,7 +57,7 @@ def play_ldplayer_record(
         raise ValueError("speed must be greater than 0")
 
     taps = load_ldplayer_record(path, target_size=device.screen_size())
-    _play_recorded_taps(device, taps, speed, stop_event=stop_event)
+    play_recorded_taps(device, taps, speed, stop_event=stop_event)
 
 
 def load_ldplayer_record(
@@ -115,7 +115,7 @@ def load_ldplayer_record(
     return taps
 
 
-def _play_recorded_taps(
+def play_recorded_taps(
     device: AvdDevice,
     taps: list[RecordedTap],
     speed: float,
