@@ -1,19 +1,11 @@
 import argparse
-import json
 import sys
-import threading
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from avd_runner import AvdDevice, find_template, solve_captcha, wait
-from avd_runner.recording import (
-    load_ldplayer_record,
-    load_taps,
-    play_recorded_taps,
-    record_taps,
-)
 
 
 ASSETS = REPO_ROOT / "assets"
@@ -42,8 +34,7 @@ RESULT_OK_BUTTON_TEMPLATE = ASSETS / "result_ok_button.png"
 OPEN_ALL_MYSTERY_BOX_BUTTON_TEMPLATE = ASSETS / "open_all_mystery_box_button.png"
 CONFIRM_MYSTERY_BOX_BUTTON_TEMPLATE = ASSETS / "confirm_mystery_box_button.png"
 LEVEL_UP_CONFIRM_BUTTON_TEMPLATE = ASSETS / "level_up_confirm_button.png"
-RUN_RECORDING_PATH = REPO_ROOT / "recordings" / "auto_runner.json"
-LDPLAYER_RECORDING_PATH = REPO_ROOT / "recordings" / "my_script(4).record"
+LEVEL_RECORDINGS_DIR = REPO_ROOT / "recordings" / "levels"
 
 
 def solve_captcha_if_present(device: AvdDevice, screen: bytes) -> bool:
@@ -286,7 +277,7 @@ def tap_open_all_mystery_box_button(device: AvdDevice) -> bool:
         device,
         "Open All Mystery Box",
         OPEN_ALL_MYSTERY_BOX_BUTTON_TEMPLATE,
-        attempts=10,
+        attempts=5,
     )
 
 
@@ -295,7 +286,7 @@ def tap_confirm_mystery_box_button(device: AvdDevice) -> bool:
         device,
         "Confirm Mystery Box",
         CONFIRM_MYSTERY_BOX_BUTTON_TEMPLATE,
-        attempts=10,
+        attempts=5,
     )
 
 def tap_level_up_confirm_button(device: AvdDevice) -> bool:
@@ -303,142 +294,107 @@ def tap_level_up_confirm_button(device: AvdDevice) -> bool:
         device,
         "Level Up Confirm",
         LEVEL_UP_CONFIRM_BUTTON_TEMPLATE,
-        attempts=10,
+        attempts=5,
     )
 
 
-def monitor_activate_cookie_relay(
-    device: AvdDevice,
-    stop_event: threading.Event,
-    interval_seconds: float,
-) -> None:
-    while not stop_event.is_set():
-        screen = device.screenshot_bytes()
-        match = find_template(screen, ACTIVATE_COOKIE_RELAY_TEMPLATE, threshold=0.85)
-        if match:
-            device.tap(match.center_x, match.center_y)
-            print(
-                f"Tapped Activate Cookie Relay at {match.center_x}, {match.center_y} "
-                f"score={match.score:.3f}"
+def resolve_episode_dir(episode: str | None) -> Path:
+    """Pick the episode's recordings folder; default to the only one present."""
+    available = sorted(
+        p.name for p in LEVEL_RECORDINGS_DIR.iterdir() if p.is_dir()
+    ) if LEVEL_RECORDINGS_DIR.is_dir() else []
+    if episode:
+        path = LEVEL_RECORDINGS_DIR / episode
+        if not path.is_dir():
+            raise SystemExit(
+                f"No recordings for episode {episode!r}. Available: {available or 'none'}"
             )
-            stop_event.set()
-            return
-
-        stop_event.wait(interval_seconds)
-
-
-def load_anchors(recording_path: Path) -> list[dict]:
-    """Load re-sync checkpoints for a recording, if any.
-
-    An anchors file lives next to the recording as `<name>.anchors.json`:
-
-        {"anchors": [
-            {"after_tap": 12, "template": "double_coins_banner.png", "timeout": 30}
-        ]}
-
-    `after_tap` is the 1-based tap index printed during recording ("Recorded
-    tap N"); playback pauses after that tap until `template` (relative to
-    assets/) is on screen, or aborts after `timeout` seconds (default 30).
-    """
-    path = recording_path.with_name(recording_path.name + ".anchors.json")
-    if not path.exists():
-        return []
-    return json.loads(path.read_text(encoding="utf-8"))["anchors"]
-
-
-def split_taps_at_anchors(taps: list, anchors: list[dict]) -> list[tuple[list, dict | None]]:
-    """Split taps into (segment, anchor) pairs; the final segment has no anchor."""
-    segments: list[tuple[list, dict | None]] = []
-    start = 0
-    for anchor in sorted(anchors, key=lambda a: a["after_tap"]):
-        end = min(max(int(anchor["after_tap"]), start), len(taps))
-        segments.append((taps[start:end], anchor))
-        start = end
-    segments.append((taps[start:], None))
-    return segments
+        return path
+    if len(available) == 1:
+        return LEVEL_RECORDINGS_DIR / available[0]
+    raise SystemExit(
+        f"--episode is required when there isn't exactly one recorded episode. "
+        f"Available: {available or 'none'}"
+    )
 
 
 def run_after_start(
     device: AvdDevice,
     mode: str,
-    recording_path: Path,
-    speed: float,
-    stop_on_cookie_relay: bool,
-    cookie_relay_check_interval: float,
+    no_cookie_relay: bool,
+    episode: str | None,
 ) -> None:
-    if mode == "record":
-        record_taps(device, recording_path)
-        return
+    # Imported lazily so the menu-only helpers stay usable without
+    # windows-capture installed.
+    from avd_runner.capture import WindowCapture
 
-    if not recording_path.exists():
-        print(f"Recording not found: {recording_path}")
+    # Resolve before tapping Play so a missing episode fails without
+    # starting (and wasting) a run.
+    episode_dir = resolve_episode_dir(episode) if mode == "levels" else None
+    relay_template = None if no_cookie_relay else ACTIVATE_COOKIE_RELAY_TEMPLATE
+
+    # The gameplay drivers take over after the boost screen's final Play button.
+    wait(0.5)
+    if not tap_play_with_double_coins_button(device):
         raise SystemExit(1)
 
-    stop_event = threading.Event()
-    if stop_on_cookie_relay:
-        monitor = threading.Thread(
-            target=monitor_activate_cookie_relay,
-            args=(device, stop_event, cookie_relay_check_interval),
-            daemon=True,
-        )
-        monitor.start()
+    capture = WindowCapture(device_size=device.screen_size())
+    try:
+        if mode == "levels":
+            from avd_runner.levels import LevelReplayer
 
-    if mode == "ldplayer":
-        taps = load_ldplayer_record(recording_path, target_size=device.screen_size())
-    else:
-        taps = load_taps(recording_path)
+            runner = LevelReplayer(
+                device,
+                capture,
+                ASSETS,
+                episode_dir,
+                exit_template=RESULT_OK_BUTTON_TEMPLATE,
+            )
+        if mode == "reactive":
+            from avd_runner.reactive import ReactiveRunner
 
-    synced = True
-    for segment, anchor in split_taps_at_anchors(taps, load_anchors(recording_path)):
-        play_recorded_taps(device, segment, speed, stop_event=stop_event)
-        if stop_event.is_set() or anchor is None:
-            break
-        # Re-sync on the anchor before the next segment; wait_for_template
-        # also solves any captcha that popped up mid-playback.
-        if not wait_for_template(
-            device,
-            anchor["template"],
-            ASSETS / anchor["template"],
-            attempts=int(anchor.get("timeout", 30)),
-        ):
-            print(f"Anchor {anchor['template']} not found after tap {anchor['after_tap']}.")
-            synced = False
-            break
+            runner = ReactiveRunner(
+                device,
+                capture,
+                ASSETS / "witch_oven",
+                exit_template=RESULT_OK_BUTTON_TEMPLATE,
+                relay_template=relay_template,
+            )
+        if mode == "none":
+            from avd_runner.none import NoneRunner
 
-    stop_event.set()
-    if not synced:
-        raise SystemExit(1)
+            runner = NoneRunner(
+                device,
+                capture,
+                exit_template=RESULT_OK_BUTTON_TEMPLATE,
+                relay_template=relay_template,
+            )
+        if not runner.run():
+            raise SystemExit(1)
+    finally:
+        capture.close()
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the Cookie Run setup bot.")
     parser.add_argument(
         "--mode",
-        choices=("ldplayer", "playback", "record"),
-        default="ldplayer",
-        help="Replay an LDPlayer .record, replay JSON taps, or record new JSON taps.",
+        choices=("levels", "reactive", "none"),
+        default="levels",
+        help="Replay per-level recordings re-synced on the level progress bar, "
+        "play reactively by detecting obstacles on screen, or 'none': play "
+        "nothing and just watch for the relay banner and result screen.",
     )
     parser.add_argument(
-        "--recording",
-        type=Path,
-        help="Path to the recording file.",
+        "--episode",
+        help="Episode whose level recordings to replay (folder under "
+        "recordings/levels/). Defaults to the only recorded episode.",
     )
     parser.add_argument(
-        "--speed",
-        type=float,
-        default=1.0,
-        help="Playback speed multiplier. Use values below 1.0 to slow down.",
-    )
-    parser.add_argument(
-        "--stop-on-cookie-relay",
+        "--no-cookie-relay",
         action="store_true",
-        help="During playback, tap activate_cookie_relay.png if found and stop playback.",
-    )
-    parser.add_argument(
-        "--cookie-relay-check-interval",
-        type=float,
-        default=2.0,
-        help="Seconds between activate_cookie_relay.png checks during playback.",
+        help="Don't tap activate_cookie_relay.png when it appears mid-run "
+        "(reactive and none modes tap it by default).",
     )
     parser.add_argument(
         "--no-captcha",
@@ -461,11 +417,14 @@ def parse_args() -> argparse.Namespace:
         default=2.0,
         help="Seconds to wait between loop iterations.",
     )
+    parser.add_argument(
+        "--skip-top-row-boosts",
+        action="store_true",
+        help="Skip top row boost checks.",
+    )
     args = parser.parse_args()
     if args.loop_count is not None and args.loop_count < 1:
         parser.error("--loop-count must be at least 1")
-    if args.recording is None:
-        args.recording = LDPLAYER_RECORDING_PATH if args.mode == "ldplayer" else RUN_RECORDING_PATH
     return args
 
 
@@ -505,38 +464,28 @@ def run_once(device: AvdDevice, args: argparse.Namespace) -> None:
         if not tap_boost_buy_button(device):
             raise SystemExit(1)
 
-    wait(0.5)
-    tap_double_xp_if_visible(device)
+    if not args.skip_top_row_boosts:
+        wait(0.5)
+        tap_double_xp_if_visible(device)
 
-    wait(0.5)
-    tap_power_jelly_boost_if_visible(device)
+        wait(0.5)
+        tap_power_jelly_boost_if_visible(device)
 
-    wait(0.5)
-    tap_hp_extension_if_visible(device)
+        wait(0.5)
+        tap_hp_extension_if_visible(device)
 
-    run_after_start(
-        device,
-        args.mode,
-        args.recording,
-        args.speed,
-        args.stop_on_cookie_relay,
-        args.cookie_relay_check_interval,
-    )
+    run_after_start(device, args.mode, args.no_cookie_relay, args.episode)
 
     wait(0.5)
     if not tap_result_ok_button(device):
         raise SystemExit(1)
 
     wait(0.5)
-    if not tap_open_all_mystery_box_button(device):
-        raise SystemExit(1)
+    if tap_open_all_mystery_box_button(device):
+        wait(0.5)
+        tap_confirm_mystery_box_button(device)
 
     wait(0.5)
-    if not tap_confirm_mystery_box_button(device):
-        raise SystemExit(1)
-
-    wait(0.5)
-    # The level-up dialog only appears on some runs, so a miss is fine.
     tap_level_up_confirm_button(device)
 
 

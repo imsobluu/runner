@@ -3,5 +3,7 @@ __pycache__/
 .venv/
 screenshots/
 recordings/
+captures/
+extracted_sprites/
 .agents/
 .claude/

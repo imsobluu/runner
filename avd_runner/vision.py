@@ -25,10 +25,11 @@ class TemplateMatch:
 
 
 def find_template(
-    screenshot_png: bytes,
+    screenshot: bytes | Any,
     template_path: str | Path,
     threshold: float = 0.9,
 ) -> TemplateMatch | None:
+    """Find template_path in a screenshot given as PNG bytes or a BGR array."""
     try:
         import cv2
         import numpy as np
@@ -38,10 +39,13 @@ def find_template(
             "Install them with: python3 -m pip install opencv-python numpy"
         ) from exc
 
-    screen_array = np.frombuffer(screenshot_png, dtype=np.uint8)
-    screen = cv2.imdecode(screen_array, cv2.IMREAD_COLOR)
-    if screen is None:
-        raise ValueError("Could not decode screenshot PNG bytes")
+    if isinstance(screenshot, bytes):
+        screen_array = np.frombuffer(screenshot, dtype=np.uint8)
+        screen = cv2.imdecode(screen_array, cv2.IMREAD_COLOR)
+        if screen is None:
+            raise ValueError("Could not decode screenshot PNG bytes")
+    else:
+        screen = screenshot
 
     key = str(template_path)
     template = _template_cache.get(key)

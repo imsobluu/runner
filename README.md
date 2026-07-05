@@ -1,155 +1,185 @@
 # AVD Game Automation Runner
 
-A small Python scripting framework for automating an Android Virtual Device with
-ADB. The core layer handles device I/O: screenshots, taps, swipes, text, and
-key events. Your game scripts can then implement simple loops:
+A Python framework for automating a Cookie Run bonus-stage farming loop on an
+Android emulator (LDPlayer). The menu/setup phase is driven closed-loop over
+ADB screenshots and template matching; the gameplay phase is driven either by
+per-level tap replay re-synced on the in-game progress bar, or by a fully
+reactive obstacle-detection loop.
 
-1. Capture the screen.
-2. Inspect pixels or match an image.
-3. Tap/swipe/type.
-4. Wait and repeat.
+## Requirements
 
-## Quick Start
+- Windows (frame capture uses the Windows Graphics Capture API)
+- LDPlayer (or another emulator visible to `adb`)
+- Python 3.12+ with the packages in `requirements.txt` plus `windows-capture`
 
-Install dependencies into a local environment:
-
-```sh
+```powershell
 uv venv .venv
 uv pip install -r requirements.txt
+uv pip install windows-capture
 ```
 
-Run scripts with the environment Python:
+Environment variables (all optional):
 
-```sh
-.venv\Scripts\python.exe examples\tap_center.py
+```powershell
+$env:ANDROID_SERIAL = "emulator-5554"   # target device if several are connected
+$env:ADB_PATH = "C:\path\to\adb.exe"    # adb binary if not on PATH
+$env:SCRCPY_PATH = "C:\path\to\scrcpy.exe"
 ```
 
-If more than one Android device is connected, set the target:
+## The full bot
 
-```sh
-$env:ANDROID_SERIAL = "emulator-5554"
-.venv\Scripts\python.exe examples\tap_center.py
+```powershell
+.venv\Scripts\python.exe -u scripts\auto_runner.py --mode levels
 ```
 
-## Example Script
+One run = menu setup (Play, boost purchases, captcha solving) -> gameplay ->
+result screen -> mystery boxes. Add `--loop` to repeat forever or
+`--loop-count N` for a fixed number of runs.
 
-```python
-from avd_runner import AvdDevice, wait
+### Gameplay modes (`--mode`)
 
-device = AvdDevice.from_env()
-width, height = device.screen_size()
+| Mode | Gameplay driver | Needs |
+|------|-----------------|-------|
+| `levels` (default) | Replays one tap trace per level, re-synced at every level start via the progress bar and a pause/continue handshake. Recommended. | `recordings/levels/<episode>/*.json` from `scripts/record_levels.py` |
+| `reactive` | No recordings: detects obstacle sprites in a lookahead window and jumps/slides in response (~25 ms loop). | obstacle templates in `assets/witch_oven/` |
+| `none` | Plays nothing during the run: watches the screen, taps the Activate Cookie Relay banner when it appears, and waits for the result screen. Useful to let a boosted run ride, or to play the run yourself while the bot handles menus, boosts, and results. | - |
 
-device.tap(width // 2, height // 2)
-wait(0.5)
-device.swipe(width // 2, int(height * 0.8), width // 2, int(height * 0.2), duration_ms=400)
+Other flags: `--episode` (which episode's recordings to replay; defaults to
+the only recorded episode), `--no-captcha` (disable the anti-bot captcha
+solver), `--no-cookie-relay` (don't tap the Activate Cookie Relay banner
+mid-run; `reactive` and `none` modes tap it by default),
+`--skip-top-row-boosts` (don't buy the Double XP / Power Jelly / HP
+Extension boosts during setup).
+
+### How `levels` mode stays in sync
+
+Recording and playback perform the IDENTICAL sequence at every level start:
+detect the level on the progress bar, tap pause, tap Continue, and take t=0
+from the frame where the pause menu disappears. Because both sides interact
+with the game the same way, every latency and any game side-effect of
+pausing appears on both sides and cancels. (An earlier design that replayed
+without pausing - treating the progress bar as a linear clock - desynced
+badly; the symmetry is load-bearing, don't break it.)
+
+The one remaining asymmetry is WHERE in the level the freeze lands:
+detection can be late by a variable amount when a transition hides the
+marker (0-7% observed). Both sides therefore read the marker's exact
+position while frozen - it stays readable behind the pause menu - and the
+replayer shifts its schedule by (p_replay - p_record) / marker speed, a
+local correction that is zero when the freeze points match. Obstacle hits
+only cost HP - timing is unaffected - so a trace recorded on a clean run
+stays valid unless the cookie dies. Trace format is v4; older recordings
+are rejected with a message to re-record.
+
+## Recording per-level traces
+
+The game is organized into episodes (e.g. Episode 1: Escape from the Oven),
+each made of several levels. Record one episode at a time:
+
+```powershell
+.venv\Scripts\python.exe -u scripts\record_levels.py --episode ep01
 ```
 
-## Auto Runner Bot
+(`--episode` is prompted interactively if omitted; the id is just the folder
+name under `recordings/levels/`.) Start a run of that episode and play it
+yourself. At each level start the tool pauses the game, beeps, and asks in
+the console: `Enter` = record the level, `s` = play it unrecorded (use this
+to skip ahead to a level you want to redo), `q` = quit. After answering, tap
+the game's own Continue button - that tap is t=0. Traces are saved to
+`recordings/levels/<episode>/level_NN.json` as `{t, x, y, duration}` steps
+(slide holds keep their duration); re-recording a level overwrites its file.
+Dying mid-level discards that level's partial trace; finished levels are
+kept. Boundary and pause-menu screenshots land in
+`captures/levels_<episode>_<timestamp>/`.
 
-Start the bot by scanning for the Play button and tapping it:
+## Project structure
 
-```sh
-$env:ANDROID_SERIAL = "emulator-5554"
-$env:ADB_PATH = "E:\scrcpy-win64-v3.3.4\adb.exe"
-.venv\Scripts\python.exe scripts\auto_runner.py
+```
+avd_runner/            Reusable library (device I/O, vision, capture, gameplay drivers)
+  device.py            AvdDevice: adb wrapper - tap, swipe, keyevent, text,
+                       screenshots, screen size, scrcpy launcher
+  vision.py            find_template(screenshot, template) -> TemplateMatch;
+                       accepts PNG bytes or BGR numpy frames; caches templates
+  capture.py           WindowCapture: ~4 ms frame grabs of the emulator window
+                       via Windows Graphics Capture; works while occluded (not
+                       minimized); crops the render area, returns device-space
+                       BGR frames. Import directly, not via the package.
+  recording.py         getevent touch-stream utilities: find the touch input
+                       device, parse raw tap events (used by record_levels.py)
+  levels.py            Per-level replay: progress-bar reading (read_progress),
+                       level trace loading, LevelReplayer (pause/continue
+                       handshake + scheduled tap playback per level)
+  reactive.py          ReactiveRunner: capture -> detect obstacle template in
+                       lookahead region -> jump/slide via persistent shell;
+                       obstacle templates are data (see assets/witch_oven)
+  none.py              NoneRunner: plays nothing; taps the relay banner and
+                       waits for the result screen (--mode none)
+  captcha.py           Anti-bot captcha solver: detects the modal, measures
+                       per-cell motion across frames, picks the outlier cards
+  __init__.py          Re-exports the ADB/vision/captcha API (capture, levels,
+                       reactive, and recording are imported explicitly)
+
+scripts/               Game-specific entry points
+  auto_runner.py       The full farming bot (see modes above). Also contains
+                       the menu-phase helpers (tap_template, wait_for_template,
+                       boost purchasing, mystery boxes)
+  record_levels.py     Interactive per-level trace recorder (see above)
+  record_frames.py     Save a burst of gameplay frames (JPEG) for offline
+                       analysis: --seconds, --fps, --name -> captures/<name>/
+  extract_sprites.py   Slice sprites out of the game APK's TexturePacker
+                       atlases (assets/kakaoBC_HD/*.plist); frame names encode
+                       jump/slide actions. Reference/catalog tooling.
+  check_device.py      Sanity check: prints screen size, saves a screenshot
+  test_levels.py       Self-checks for progress reading + recorded trace shape
+  test_reactive.py     Self-checks for obstacle template loading + detection
+                       against captured frames
+  test_captcha.py      Self-checks for the captcha cell-motion picker
+
+assets/                Menu-phase button templates (play, boosts, result OK,
+                       mystery boxes, captcha banner, ...) - PNG crops at
+                       1280x720 device resolution
+  level_banners/       Level-sync templates: progress_marker.png (the
+                       gingerbread marker the progress bar is read with),
+                       continue_button.png (pause-menu verification),
+                       pause_button.png, level_01.png
+  witch_oven/          Reactive-mode obstacle templates, named
+                       <name>_jump.png / <name>_slide.png - the filename
+                       suffix IS the action; drop in a new crop to teach the
+                       bot a new obstacle (no code change)
+
+examples/              Minimal library usage samples (tap_center, template
+                       matching, scrcpy launch)
+
+recordings/            (gitignored) per-level tap traces, one folder per
+                       episode: levels/<episode>/level_NN.json
+captures/              (gitignored) frame bursts and recording-session
+                       screenshots (boundary/pause-menu shots)
+screenshots/           (gitignored) ad-hoc debug screenshots
+extracted_sprites/     (gitignored) APK sprite catalog from extract_sprites.py
 ```
 
-By default the bot replays the exported LDPlayer script at
-`recordings\my_script(4).record` after starting the run. The `recordings/`
-folder is not tracked in git, so export or record your own script first.
-Use a different LDPlayer export with:
+## Tests
 
-```sh
-.venv\Scripts\python.exe scripts\auto_runner.py --mode ldplayer --recording recordings\my_other_script.record
+Plain-Python assert scripts, no framework:
+
+```powershell
+.venv\Scripts\python.exe scripts\test_levels.py
+.venv\Scripts\python.exe scripts\test_reactive.py
+.venv\Scripts\python.exe scripts\test_captcha.py
 ```
 
-Record a new JSON run instead with:
-
-```sh
-.venv\Scripts\python.exe scripts\auto_runner.py --mode record
-```
-
-Replay that JSON recording with:
-
-```sh
-.venv\Scripts\python.exe scripts\auto_runner.py --mode playback
-```
-
-Slow replay down when needed:
-
-```sh
-.venv\Scripts\python.exe scripts\auto_runner.py --speed 0.85
-```
-
-The Play button template is stored at `assets/play_button.png`.
-
-## Tap Recording
-
-Record taps from the device:
-
-```sh
-.venv\Scripts\python.exe scripts\record_taps.py recordings\run.json
-```
-
-Press `Ctrl+C` to stop recording. Replay the taps with:
-
-```sh
-.venv\Scripts\python.exe scripts\playback_taps.py recordings\run.json
-```
-
-Recordings include the delay before each tap and how long the tap was held.
-Older recordings without hold durations still replay as normal taps.
-
-## Scrcpy Screen Stream
-
-For a real-time device view, install `scrcpy` and launch it through the runner:
-
-```python
-from avd_runner import AvdDevice
-
-device = AvdDevice.from_env()
-process = device.start_scrcpy("--window-title", "AVD Runner", no_control=True)
-process.wait()
-```
-
-Run the included example:
-
-```sh
-.venv\Scripts\python.exe examples\launch_scrcpy.py
-```
-
-Use `SCRCPY_PATH` if `scrcpy` is not on `PATH`, and `ANDROID_SERIAL` when more
-than one device is connected.
-
-```sh
-$env:SCRCPY_PATH = "E:\scrcpy-win64-v3.3.4\scrcpy.exe"
-```
-
-## Optional Image Matching
-
-The framework works without third-party packages. Template matching uses the
-packages from `requirements.txt`:
-
-```sh
-uv pip install -r requirements.txt
-```
-
-Then use `find_template`:
-
-```python
-from avd_runner import AvdDevice, find_template
-
-device = AvdDevice.from_env()
-screen = device.screenshot_bytes()
-match = find_template(screen, "assets/play_button.png", threshold=0.9)
-
-if match:
-    device.tap(match.center_x, match.center_y)
-```
+Checks that need captured frames or recorded traces skip themselves when
+those local files are absent.
 
 ## Notes
 
-- Coordinates are physical screen pixels reported by the emulator.
-- Prefer short waits after actions; games often need a few frames to settle.
-- Keep game-specific behavior in `scripts/` or `examples/`; keep reusable ADB
-  primitives in `avd_runner/`.
+- All coordinates are physical device pixels at 1280x720; templates were
+  cropped at that resolution. A different emulator resolution needs recropped
+  templates and recalibrated geometry in `avd_runner/levels.py` /
+  `avd_runner/reactive.py`.
+- `WindowCapture` needs the LDPlayer window visible (it may be covered by
+  other windows, but not minimized).
+- Run long sessions with `python -u` when redirecting output to a file,
+  otherwise prints sit in Python's block buffer.
+- Keep game-specific behavior in `scripts/`; keep reusable primitives in
+  `avd_runner/`.
