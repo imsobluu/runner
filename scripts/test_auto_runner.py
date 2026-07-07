@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 
 from avd_runner import AvdDevice
+from avd_runner import menu
 from scripts import auto_runner
 
 
@@ -29,14 +30,14 @@ ctx = auto_runner.AutoRunnerContext(
 
 # Context-backed capture and disabled captcha checks are pure and should not
 # touch WGC/ADB.
-assert auto_runner.take_screenshot(ctx) is frame
-assert not auto_runner.solve_captcha_if_present(ctx, frame)
+assert menu.take_screenshot(ctx) is frame
+assert not menu.solve_captcha_if_present(ctx, frame, auto_runner.CAPTCHA_BANNER_TEMPLATE)
 
 # Debug tap saving is scoped to the context and increments per run directory.
 with tempfile.TemporaryDirectory() as td:
     ctx.debug_run_dir = Path(td)
     ctx.debug_tap_count = 0
-    auto_runner.debug_save_tap(ctx, "Play Button", frame, 3, 4)
+    menu.debug_save_tap(ctx, "Play Button", frame, 3, 4)
     assert ctx.debug_tap_count == 1
     assert (Path(td) / "01_play_button.png").exists()
 
