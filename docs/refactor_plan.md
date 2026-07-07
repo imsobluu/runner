@@ -126,14 +126,14 @@ and needs v5, then still exit `ok`; that is handled compatibility behavior.
   - Risk: low for tests, medium if fixtures are large or brittle.
   - Verify: `test_captcha.py`.
 
-- [ ] Add gameplay runner unit seams with fake capture/device.
+- [x] Add gameplay runner unit seams with fake capture/device.
   - Files likely affected: `scripts/test_levels.py`, `scripts/test_reactive.py`,
     `scripts/test_none.py`, `avd_runner/levels.py`, `avd_runner/reactive.py`,
     `avd_runner/none.py`.
   - Goal: test timing decisions and relay/result checks without real emulator
     state.
-  - Status: `none` mode and reactive cooldown/result-exit behavior have fake
-    capture/device coverage; levels loop seams still need coverage.
+  - Status: `none`, reactive cooldown/result-exit behavior, and levels
+    progress/tap/result behavior have fake capture/device coverage.
   - Risk: medium; fake time/capture can accidentally encode the current
     implementation too tightly.
   - Verify: none/levels/reactive tests plus manual run when available.
