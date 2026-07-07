@@ -8,6 +8,13 @@ from .captcha import solve_captcha
 from .device import AvdDevice, wait
 from .vision import find_template
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SCREENSHOTS_DIR = REPO_ROOT / "screenshots"
+
+
+class MenuAutomationError(RuntimeError):
+    pass
+
 
 class MenuContext(Protocol):
     device: AvdDevice
@@ -59,7 +66,7 @@ def solve_captcha_if_present(
         else None,
     ):
         print("Failed to solve captcha.")
-        raise SystemExit(1)
+        raise MenuAutomationError()
     return True
 
 
@@ -136,7 +143,7 @@ def tap_template(
         wait(delay_seconds)
 
     if save_debug:
-        debug_path = Path("screenshots") / f"{template_path.stem}_not_found.png"
+        debug_path = SCREENSHOTS_DIR / f"{template_path.stem}_not_found.png"
         import cv2
 
         debug_path.parent.mkdir(parents=True, exist_ok=True)

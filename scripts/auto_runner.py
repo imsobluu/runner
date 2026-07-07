@@ -11,6 +11,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from avd_runner import AvdDevice, wait
 from avd_runner.debug_session import DebugSession
 from avd_runner.menu import (
+    MenuAutomationError,
     is_toggle_selected,
     tap_template,
     wait_for_any_template,
@@ -443,7 +444,7 @@ def main() -> None:
 
             run_number += 1
             wait(args.loop_delay)
-    except RunnerError:
+    except (MenuAutomationError, RunnerError):
         raise SystemExit(1)
     finally:
         ctx.debug.close()

@@ -40,6 +40,7 @@ assert auto_runner.PLAY_WITH_DOUBLE_COINS_TARGET.verify_gone
 assert auto_runner.FAST_START_0_TARGET.threshold == 0.99
 assert auto_runner.FAST_START_0_TARGET.attempts == 1
 assert auto_runner.RESULT_OK_TARGET.attempts == 120
+assert menu.SCREENSHOTS_DIR == auto_runner.REPO_ROOT / "screenshots"
 
 # Debug tap saving is scoped to the context and increments per run directory.
 with tempfile.TemporaryDirectory() as td:
