@@ -31,6 +31,15 @@ class AutoRunnerContext:
     debug_tap_count: int = 0
 
 
+@dataclass(frozen=True)
+class TemplateTarget:
+    name: str
+    path: Path
+    threshold: float = 0.85
+    attempts: int = 5
+    verify_gone: bool = False
+
+
 PLAY_BUTTON_TEMPLATE = ASSETS / "play_button.png"
 PLAY_WITH_DOUBLE_COINS_TEMPLATE = ASSETS / "play_with_double_coins.png"
 RANDOM_BOOST_TEMPLATE = ASSETS / "random_boost.png"
@@ -53,28 +62,61 @@ CONFIRM_MYSTERY_BOX_BUTTON_TEMPLATE = ASSETS / "confirm_mystery_box_button.png"
 LEVEL_UP_CONFIRM_BUTTON_TEMPLATE = ASSETS / "level_up_confirm_button.png"
 LEVEL_RECORDINGS_DIR = REPO_ROOT / "recordings" / "levels"
 
+PLAY_TARGET = TemplateTarget("Play", PLAY_BUTTON_TEMPLATE)
+PLAY_WITH_DOUBLE_COINS_TARGET = TemplateTarget(
+    "Play with Double Coins",
+    PLAY_WITH_DOUBLE_COINS_TEMPLATE,
+    verify_gone=True,
+)
+RANDOM_BOOST_TARGET = TemplateTarget("Random Boost", RANDOM_BOOST_TEMPLATE)
+MULTI_TARGET = TemplateTarget("Multi", MULTI_BUTTON_TEMPLATE)
+MULTI_BUY_TARGET = TemplateTarget("Multi Buy", MULTI_BUY_BUTTON_TEMPLATE)
+DOUBLE_COINS_TARGET = TemplateTarget("Double Coins", DOUBLE_COINS_TEMPLATE)
+FAST_START_0_TARGET = TemplateTarget("Fast Start 0", FAST_START_0_TEMPLATE, threshold=0.99, attempts=1)
+COOKIE_RELAY_0_TARGET = TemplateTarget("Cookie Relay 0", COOKIE_RELAY_0_TEMPLATE, threshold=0.99, attempts=1)
+DOUBLE_XP_TARGET = TemplateTarget("Double XP", DOUBLE_XP_TEMPLATE, attempts=1)
+POWER_JELLY_BOOST_TARGET = TemplateTarget("Power Jelly Boost", POWER_JELLY_BOOST_TEMPLATE, attempts=1)
+HP_EXTENSION_TARGET = TemplateTarget("HP Extension", HP_EXTENSION_TEMPLATE, attempts=1)
+BOOST_BUY_TARGET = TemplateTarget("Boost Buy", BOOST_BUY_BUTTON_TEMPLATE)
+RESULT_OK_TARGET = TemplateTarget("Result OK", RESULT_OK_BUTTON_TEMPLATE, attempts=120)
+OPEN_ALL_MYSTERY_BOX_TARGET = TemplateTarget("Open All Mystery Box", OPEN_ALL_MYSTERY_BOX_BUTTON_TEMPLATE)
+CONFIRM_MYSTERY_BOX_TARGET = TemplateTarget("Confirm Mystery Box", CONFIRM_MYSTERY_BOX_BUTTON_TEMPLATE)
+LEVEL_UP_CONFIRM_TARGET = TemplateTarget("Level Up Confirm", LEVEL_UP_CONFIRM_BUTTON_TEMPLATE)
+
+
+def tap_target(
+    ctx: AutoRunnerContext,
+    target: TemplateTarget,
+    *,
+    attempts: int | None = None,
+    save_debug: bool = False,
+) -> bool:
+    return tap_template(
+        ctx,
+        target.name,
+        target.path,
+        CAPTCHA_BANNER_TEMPLATE,
+        threshold=target.threshold,
+        attempts=target.attempts if attempts is None else attempts,
+        save_debug=save_debug,
+        verify_gone=target.verify_gone,
+    )
+
 
 def tap_play_button(
     ctx: AutoRunnerContext,
     attempts: int = 5,
 ) -> bool:
-    return tap_template(ctx, "Play", PLAY_BUTTON_TEMPLATE, CAPTCHA_BANNER_TEMPLATE, attempts=attempts)
+    return tap_target(ctx, PLAY_TARGET, attempts=attempts)
 
 
 def tap_play_with_double_coins_button(
     ctx: AutoRunnerContext,
     attempts: int = 5,
 ) -> bool:
-    return tap_template(
-        ctx,
-        "Play with Double Coins",
-        PLAY_WITH_DOUBLE_COINS_TEMPLATE,
-        CAPTCHA_BANNER_TEMPLATE,
-        attempts=attempts,
-        # The purchase-complete modal from a boost buy can swallow this tap
-        # without covering the button; re-tap until the button actually goes.
-        verify_gone=True,
-    )
+    # The purchase-complete modal from a boost buy can swallow this tap without
+    # covering the button; re-tap until the button actually goes.
+    return tap_target(ctx, PLAY_WITH_DOUBLE_COINS_TARGET, attempts=attempts)
 
 
 def tap_random_boost_button(
@@ -88,14 +130,7 @@ def tap_random_boost_button(
     ):
         return True
 
-    return tap_template(
-        ctx,
-        "Random Boost",
-        RANDOM_BOOST_TEMPLATE,
-        CAPTCHA_BANNER_TEMPLATE,
-        attempts=attempts,
-        save_debug=save_debug,
-    )
+    return tap_target(ctx, RANDOM_BOOST_TARGET, attempts=attempts, save_debug=save_debug)
 
 
 def tap_multi_button(
@@ -103,14 +138,7 @@ def tap_multi_button(
     attempts: int = 5,
     save_debug: bool = False,
 ) -> bool:
-    return tap_template(
-        ctx,
-        "Multi",
-        MULTI_BUTTON_TEMPLATE,
-        CAPTCHA_BANNER_TEMPLATE,
-        attempts=attempts,
-        save_debug=save_debug,
-    )
+    return tap_target(ctx, MULTI_TARGET, attempts=attempts, save_debug=save_debug)
 
 
 def tap_multi_buy_button(
@@ -118,14 +146,7 @@ def tap_multi_buy_button(
     attempts: int = 5,
     save_debug: bool = False,
 ) -> bool:
-    return tap_template(
-        ctx,
-        "Multi Buy",
-        MULTI_BUY_BUTTON_TEMPLATE,
-        CAPTCHA_BANNER_TEMPLATE,
-        attempts=attempts,
-        save_debug=save_debug,
-    )
+    return tap_target(ctx, MULTI_BUY_TARGET, attempts=attempts, save_debug=save_debug)
 
 
 def tap_double_coins_button(
@@ -139,91 +160,46 @@ def tap_double_coins_button(
     ):
         return True
 
-    return tap_template(
-        ctx,
-        "Double Coins",
-        DOUBLE_COINS_TEMPLATE,
-        CAPTCHA_BANNER_TEMPLATE,
-        attempts=attempts,
-        save_debug=save_debug,
-    )
+    return tap_target(ctx, DOUBLE_COINS_TARGET, attempts=attempts, save_debug=save_debug)
 
 
 def tap_fast_start_0_if_visible(ctx: AutoRunnerContext) -> bool:
-    return tap_template(
-        ctx,
-        "Fast Start 0",
-        FAST_START_0_TEMPLATE,
-        CAPTCHA_BANNER_TEMPLATE,
-        threshold=0.99,
-        attempts=1,
-    )
+    return tap_target(ctx, FAST_START_0_TARGET)
 
 
 def tap_cookie_relay_0_if_visible(ctx: AutoRunnerContext) -> bool:
-    return tap_template(
-        ctx,
-        "Cookie Relay 0",
-        COOKIE_RELAY_0_TEMPLATE,
-        CAPTCHA_BANNER_TEMPLATE,
-        threshold=0.99,
-        attempts=1,
-    )
+    return tap_target(ctx, COOKIE_RELAY_0_TARGET)
 
 
 def tap_double_xp_if_visible(ctx: AutoRunnerContext) -> bool:
-    return tap_template(ctx, "Double XP", DOUBLE_XP_TEMPLATE, CAPTCHA_BANNER_TEMPLATE, attempts=1)
+    return tap_target(ctx, DOUBLE_XP_TARGET)
 
 
 def tap_power_jelly_boost_if_visible(ctx: AutoRunnerContext) -> bool:
-    return tap_template(
-        ctx,
-        "Power Jelly Boost",
-        POWER_JELLY_BOOST_TEMPLATE,
-        CAPTCHA_BANNER_TEMPLATE,
-        attempts=1,
-    )
+    return tap_target(ctx, POWER_JELLY_BOOST_TARGET)
 
 
 def tap_hp_extension_if_visible(ctx: AutoRunnerContext) -> bool:
-    return tap_template(ctx, "HP Extension", HP_EXTENSION_TEMPLATE, CAPTCHA_BANNER_TEMPLATE, attempts=1)
+    return tap_target(ctx, HP_EXTENSION_TARGET)
 
 
 def tap_boost_buy_button(ctx: AutoRunnerContext) -> bool:
-    return tap_template(ctx, "Boost Buy", BOOST_BUY_BUTTON_TEMPLATE, CAPTCHA_BANNER_TEMPLATE)
+    return tap_target(ctx, BOOST_BUY_TARGET)
 
 
 def tap_result_ok_button(ctx: AutoRunnerContext) -> bool:
-    return tap_template(ctx, "Result OK", RESULT_OK_BUTTON_TEMPLATE, CAPTCHA_BANNER_TEMPLATE, attempts=120)
+    return tap_target(ctx, RESULT_OK_TARGET)
 
 
 def tap_open_all_mystery_box_button(ctx: AutoRunnerContext) -> bool:
-    return tap_template(
-        ctx,
-        "Open All Mystery Box",
-        OPEN_ALL_MYSTERY_BOX_BUTTON_TEMPLATE,
-        CAPTCHA_BANNER_TEMPLATE,
-        attempts=5,
-    )
+    return tap_target(ctx, OPEN_ALL_MYSTERY_BOX_TARGET)
 
 
 def tap_confirm_mystery_box_button(ctx: AutoRunnerContext) -> bool:
-    return tap_template(
-        ctx,
-        "Confirm Mystery Box",
-        CONFIRM_MYSTERY_BOX_BUTTON_TEMPLATE,
-        CAPTCHA_BANNER_TEMPLATE,
-        attempts=5,
-    )
+    return tap_target(ctx, CONFIRM_MYSTERY_BOX_TARGET)
 
 def tap_level_up_confirm_button(ctx: AutoRunnerContext) -> bool:
-    return tap_template(
-        ctx,
-        "Level Up Confirm",
-        LEVEL_UP_CONFIRM_BUTTON_TEMPLATE,
-        CAPTCHA_BANNER_TEMPLATE,
-        attempts=5,
-    )
+    return tap_target(ctx, LEVEL_UP_CONFIRM_TARGET)
 
 
 def resolve_episode_dir(

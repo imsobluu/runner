@@ -33,6 +33,12 @@ ctx = auto_runner.AutoRunnerContext(
 assert menu.take_screenshot(ctx) is frame
 assert not menu.solve_captcha_if_present(ctx, frame, auto_runner.CAPTCHA_BANNER_TEMPLATE)
 
+# Target definitions preserve behavior-sensitive retry policy.
+assert auto_runner.PLAY_WITH_DOUBLE_COINS_TARGET.verify_gone
+assert auto_runner.FAST_START_0_TARGET.threshold == 0.99
+assert auto_runner.FAST_START_0_TARGET.attempts == 1
+assert auto_runner.RESULT_OK_TARGET.attempts == 120
+
 # Debug tap saving is scoped to the context and increments per run directory.
 with tempfile.TemporaryDirectory() as td:
     ctx.debug_run_dir = Path(td)
