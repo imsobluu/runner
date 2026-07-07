@@ -169,6 +169,26 @@ Plain-Python assert scripts, no framework:
 Checks that need captured frames or recorded traces skip themselves when
 those local files are absent.
 
+## Manual capture smoke check
+
+Run this after changing `avd_runner/capture.py`, WGC setup, emulator window
+handling, or device-size assumptions:
+
+```powershell
+.venv\Scripts\python.exe scripts\check_device.py
+```
+
+Expected result:
+
+- LDPlayer is open and not minimized.
+- The command prints `Captured frame: 1280x720`.
+- `screenshots/check_device.png` shows the emulator render surface only, not
+  the full LDPlayer chrome.
+- Move or cover the LDPlayer window and run the command again. Covered is OK;
+  minimized is not.
+- If using `--debug-window`, start a short `--mode none` run and confirm the
+  live overlay updates and tap marks line up with emulator coordinates.
+
 ## Notes
 
 - All coordinates are physical device pixels at 1280x720; templates were

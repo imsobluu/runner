@@ -138,11 +138,11 @@ and needs v5, then still exit `ok`; that is handled compatibility behavior.
     implementation too tightly.
   - Verify: none/levels/reactive tests plus manual run when available.
 
-- [ ] Add capture-facing smoke docs/checklist.
+- [x] Add capture-facing smoke docs/checklist.
   - Files likely affected: `README.md` or this document.
   - Goal: document manual WGC verification steps for Windows-only capture.
   - Risk: low.
-  - Verify: manual checklist only.
+  - Verify: README manual capture smoke check.
 
 ## Phase 4: refactor behavior-sensitive internals
 
