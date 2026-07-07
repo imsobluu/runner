@@ -146,9 +146,11 @@ and needs v5, then still exit `ok`; that is handled compatibility behavior.
 
 ## Phase 4: refactor behavior-sensitive internals
 
-- [ ] Refactor captcha internals only after fixture coverage.
+- [x] Refactor captcha internals only after fixture coverage.
   - Proposed changes: isolate modal detection, grid/cell measurement, motion
     scoring, and tap selection into smaller pure helpers.
+  - Status: round retry, card tapping, crop extraction, and crop-change checks
+    are isolated behind focused helpers.
   - Risk: high without fixtures; medium with fixtures.
   - Verify: captcha fixtures plus live captcha run.
 
