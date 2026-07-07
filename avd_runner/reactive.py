@@ -44,6 +44,12 @@ class Obstacle:
     template: np.ndarray  # BGR, pre-scaled by MATCH_SCALE
 
 
+@dataclass
+class ReactiveState:
+    cooldown_until: float = 0.0
+    frame_count: int = 0
+
+
 def load_obstacles(theme_dir: Path) -> list[Obstacle]:
     obstacles = []
     for path in sorted(Path(theme_dir).glob("*.png")):
@@ -113,39 +119,63 @@ class ReactiveRunner:
         self._relay_template = relay_template
         self._debug_view = debug_view
 
+    def _check_exit_or_relay(self, frame, shell) -> bool:
+        if find_template(frame, self._exit_template, threshold=0.85):
+            print("Result screen detected; reactive run finished.")
+            return True
+        if self._relay_template is not None:
+            match = find_template(frame, self._relay_template, threshold=0.85)
+            if match:
+                self._tap(shell, match.center_x, match.center_y, 80, "relay")
+                print("Tapped Activate Cookie Relay.")
+        return False
+
+    def _handle_obstacle(
+        self,
+        state: ReactiveState,
+        shell,
+        obstacle: Obstacle | None,
+        score: float,
+        now: float,
+    ) -> None:
+        if obstacle is None or now < state.cooldown_until:
+            return
+        x, y = JUMP_XY if obstacle.action == "jump" else SLIDE_XY
+        self._tap(shell, x, y, HOLD_MS[obstacle.action], obstacle.action)
+        print(f"{obstacle.action} for {obstacle.name} score={score:.2f}")
+        state.cooldown_until = now + ACTION_COOLDOWN
+
+    def _update_debug_view(
+        self,
+        frame,
+        obstacle: Obstacle | None,
+        score: float,
+        box: tuple[int, int, int, int] | None,
+    ) -> None:
+        if self._debug_view is None:
+            return
+        boxes = [(LOOK_X1, LOOK_Y1, LOOK_X2, LOOK_Y2, "lookahead", (0, 255, 0))]
+        if box is not None and obstacle is not None:
+            boxes.append((*box, f"{obstacle.name} {score:.2f}", (0, 0, 255)))
+        self._debug_view.update(frame, boxes)
+
     def run(self, max_seconds: float = 900.0) -> bool:
         """Play until the result screen appears. False on timeout."""
         deadline = time.perf_counter() + max_seconds
-        cooldown_until = 0.0
-        frame_count = 0
+        state = ReactiveState()
         with self._device.input_shell() as shell:
             while time.perf_counter() < deadline:
                 frame = self._capture.grab()
-                frame_count += 1
+                state.frame_count += 1
 
-                if frame_count % CHECK_EVERY == 0:
-                    if find_template(frame, self._exit_template, threshold=0.85):
-                        print("Result screen detected; reactive run finished.")
+                if state.frame_count % CHECK_EVERY == 0:
+                    if self._check_exit_or_relay(frame, shell):
                         return True
-                    if self._relay_template is not None:
-                        match = find_template(frame, self._relay_template, threshold=0.85)
-                        if match:
-                            self._tap(shell, match.center_x, match.center_y, 80, "relay")
-                            print("Tapped Activate Cookie Relay.")
 
                 now = time.perf_counter()
                 obstacle, score, box = detect_obstacle(frame, self._obstacles)
-                if obstacle is not None and now >= cooldown_until:
-                    x, y = JUMP_XY if obstacle.action == "jump" else SLIDE_XY
-                    self._tap(shell, x, y, HOLD_MS[obstacle.action], obstacle.action)
-                    print(f"{obstacle.action} for {obstacle.name} score={score:.2f}")
-                    cooldown_until = now + ACTION_COOLDOWN
-
-                if self._debug_view is not None:
-                    boxes = [(LOOK_X1, LOOK_Y1, LOOK_X2, LOOK_Y2, "lookahead", (0, 255, 0))]
-                    if box is not None:
-                        boxes.append((*box, f"{obstacle.name} {score:.2f}", (0, 0, 255)))
-                    self._debug_view.update(frame, boxes)
+                self._handle_obstacle(state, shell, obstacle, score, now)
+                self._update_debug_view(frame, obstacle, score, box)
 
                 time.sleep(0.005)
 

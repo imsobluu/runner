@@ -47,6 +47,14 @@ class FakeDevice:
     def input_shell(self):
         return FakeInputShell(self.shell)
 
+
+class FakeDebugView:
+    def __init__(self):
+        self.updates = []
+
+    def update(self, frame, boxes):
+        self.updates.append((frame, boxes))
+
 obstacles = load_obstacles(REPO_ROOT / "assets" / "witch_oven")
 assert {(o.name, o.action) for o in obstacles} == {
     ("fork", "slide"),
@@ -73,6 +81,49 @@ if captures.exists():
             assert box[0] < box[2] and box[1] < box[3]
 else:
     print("captures/probe1 missing; skipped real-frame checks")
+
+# Helper seams: obstacle dispatch respects cooldown and debug output includes
+# the lookahead box plus a detection box when present.
+helper = object.__new__(ReactiveRunner)
+helper._debug_view = FakeDebugView()
+helper._tap = lambda shell, x, y, hold_ms, label: shell.swipes.append((x, y, hold_ms, label))
+state = reactive.ReactiveState()
+shell = FakeShell()
+obstacle = reactive.Obstacle("fake", "slide", np.zeros((4, 4, 3), dtype=np.uint8))
+helper._handle_obstacle(state, shell, obstacle, 0.91, now=1.0)
+assert shell.swipes == [(*reactive.SLIDE_XY, reactive.HOLD_MS["slide"], "slide")]
+assert state.cooldown_until == 1.0 + reactive.ACTION_COOLDOWN
+helper._handle_obstacle(state, shell, obstacle, 0.91, now=1.1)
+assert len(shell.swipes) == 1
+
+helper._update_debug_view("frame", obstacle, 0.91, (1, 2, 3, 4))
+assert helper._debug_view.updates == [
+    (
+        "frame",
+        [
+            (reactive.LOOK_X1, reactive.LOOK_Y1, reactive.LOOK_X2, reactive.LOOK_Y2, "lookahead", (0, 255, 0)),
+            (1, 2, 3, 4, "fake 0.91", (0, 0, 255)),
+        ],
+    )
+]
+
+helper._exit_template = Path("result.png")
+helper._relay_template = Path("relay.png")
+helper._tap = lambda shell, x, y, hold_ms, label: shell.swipes.append((x, y, hold_ms, label))
+original_find_template = reactive.find_template
+try:
+    reactive.find_template = lambda _frame, template, threshold=0.85: (
+        TemplateMatch(10, 20, 8, 8, 0.99) if template == Path("relay.png") else None
+    )
+    assert not helper._check_exit_or_relay("frame", shell)
+    assert shell.swipes[-1] == (14, 24, 80, "relay")
+
+    reactive.find_template = lambda _frame, template, threshold=0.85: (
+        TemplateMatch(0, 0, 8, 8, 0.99) if template == Path("result.png") else None
+    )
+    assert helper._check_exit_or_relay("frame", shell)
+finally:
+    reactive.find_template = original_find_template
 
 # Runner-loop seam: one obstacle action fires, cooldown suppresses repeats, and
 # the result template exits the loop. This avoids real capture/input.
