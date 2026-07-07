@@ -37,6 +37,50 @@ def humanized_tap_path(x: int, y: int) -> tuple[int, int, int, int, int]:
     return x1, y1, x2, y2, random.randint(*_TAP_DWELL_MS)
 
 
+class InputShell:
+    def __init__(self, device: "AvdDevice"):
+        self._device = device
+        self._process: subprocess.Popen | None = None
+
+    def __enter__(self) -> "InputShell":
+        self._process = self._device.open_input_shell()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        if self._process is None:
+            return
+        if self._process.stdin:
+            self._process.stdin.close()
+        try:
+            self._process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            self._process.terminate()
+
+    def swipe(
+        self,
+        x1: int,
+        y1: int,
+        x2: int,
+        y2: int,
+        duration_ms: int,
+        *,
+        background: bool = False,
+        label: str = "",
+    ) -> None:
+        if self._process is None:
+            raise DeviceInputError("Input shell is not open")
+        self._device.write_swipe(
+            self._process,
+            x1,
+            y1,
+            x2,
+            y2,
+            duration_ms,
+            background=background,
+            label=label,
+        )
+
+
 @dataclass
 class AvdDevice:
     """Windows capture + ADB input device abstraction.
@@ -104,6 +148,9 @@ class AvdDevice:
             text=True,
             bufsize=1,
         )
+
+    def input_shell(self) -> InputShell:
+        return InputShell(self)
 
     def write_swipe(
         self,

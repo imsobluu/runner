@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import random
-import subprocess
 import time
 from pathlib import Path
 
@@ -34,10 +33,9 @@ class NoneRunner:
 
     def run(self, max_seconds: float = 900.0) -> bool:
         """Play until the result screen appears. False on timeout."""
-        shell = self._device.open_input_shell()
         deadline = time.perf_counter() + max_seconds
         frame_count = 0
-        try:
+        with self._device.input_shell() as shell:
             while time.perf_counter() < deadline:
                 frame = self._capture.grab()
                 frame_count += 1
@@ -59,17 +57,10 @@ class NoneRunner:
 
             print("Run timed out without seeing the result screen.")
             return False
-        finally:
-            if shell.stdin:
-                shell.stdin.close()
-            try:
-                shell.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                shell.terminate()
 
-    def _tap(self, shell: subprocess.Popen, x: int, y: int, hold_ms: int, label: str = "") -> None:
+    def _tap(self, shell, x: int, y: int, hold_ms: int, label: str = "") -> None:
         # Jitter position and dwell; identical taps run after run look robotic.
         x += random.randint(-25, 25)
         y += random.randint(-20, 20)
         hold = max(40, round(hold_ms * random.uniform(0.85, 1.15)))
-        self._device.write_swipe(shell, x, y, x, y, hold, label=label)
+        shell.swipe(x, y, x, y, hold, label=label)

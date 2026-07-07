@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import random
-import subprocess
 import time
 from pathlib import Path
 
@@ -141,7 +140,7 @@ class LevelReplayer:
         if not self._levels:
             raise ValueError(f"No level recordings in {levels_dir}")
 
-    def _tap(self, shell: subprocess.Popen, x: int, y: int, duration: float) -> None:
+    def _tap(self, shell, x: int, y: int, duration: float) -> None:
         # Jitter position, duration, and add a few px of down->up drift;
         # identical zero-travel replays run after run look robotic.
         x += random.randint(-8, 8)
@@ -149,20 +148,10 @@ class LevelReplayer:
         x2 = x + random.randint(-3, 3)
         y2 = y + random.randint(-3, 3)
         ms = max(30, round(duration * 1000 * random.uniform(0.95, 1.05)))
-        self._device.write_swipe(
-            shell,
-            x,
-            y,
-            x2,
-            y2,
-            ms,
-            background=True,
-            label="jump" if x < 640 else "slide",
-        )
+        shell.swipe(x, y, x2, y2, ms, background=True, label="jump" if x < 640 else "slide")
 
     def run(self, max_seconds: float = 1200.0) -> bool:
         """Replay levels until the result screen appears. False on timeout."""
-        shell = self._device.open_input_shell()
         deadline = time.perf_counter() + max_seconds
         level = min(self._levels)
         in_level = False
@@ -201,7 +190,7 @@ class LevelReplayer:
                 self._tap(shell, tap["x"], tap["y"], tap["duration"])
                 tap_index += 1
 
-        try:
+        with self._device.input_shell() as shell:
             while time.perf_counter() < deadline:
                 frame = self._capture.grab()
                 frame_count += 1
@@ -240,10 +229,3 @@ class LevelReplayer:
 
             print("Level replay timed out without reaching the result screen.")
             return False
-        finally:
-            if shell.stdin:
-                shell.stdin.close()
-            try:
-                shell.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                shell.terminate()
