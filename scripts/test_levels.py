@@ -57,6 +57,14 @@ class FakeDevice:
     def input_shell(self):
         return FakeInputShell(self.shell)
 
+
+class FakeDebugView:
+    def __init__(self):
+        self.updates = []
+
+    def update(self, frame, boxes):
+        self.updates.append((frame, boxes))
+
 # Progress reading against real frames (skipped if the burst isn't present).
 captures = REPO_ROOT / "captures" / "probe1"
 if captures.exists():
@@ -113,6 +121,22 @@ try:
     assert state.tap_index == 2
 finally:
     levels_module.time.perf_counter = original_perf_counter
+
+# Frame progress and debug output are isolated from the replay state machine.
+debug_runner = object.__new__(LevelReplayer)
+debug_runner._marker = object()
+debug_runner._debug_view = FakeDebugView()
+original_locate_marker = levels_module.locate_marker
+try:
+    levels_module.locate_marker = lambda frame, _marker: (0.25, (1, 2, 3, 4)) if frame == "with-marker" else None
+    assert debug_runner._frame_progress("with-marker") == (0.25, (1, 2, 3, 4))
+    assert debug_runner._frame_progress("without-marker") == (None, None)
+    debug_runner._update_debug_view("frame", 0.25, (1, 2, 3, 4))
+    assert debug_runner._debug_view.updates == [
+        ("frame", [(1, 2, 3, 4, "progress 25%", (0, 255, 0))])
+    ]
+finally:
+    levels_module.locate_marker = original_locate_marker
 
 # Runner-loop seam with fake progress/input. Three low-progress frames start
 # level 1, a progress-matched tap fires once, progress wraps to level 2, and

@@ -189,6 +189,25 @@ class LevelReplayer:
             self._tap(shell, tap["x"], tap["y"], tap["duration"])
             state.tap_index += 1
 
+    def _frame_progress(self, frame) -> tuple[float | None, tuple[int, int, int, int] | None]:
+        located = locate_marker(frame, self._marker)
+        if located is None:
+            return None, None
+        return located
+
+    def _update_debug_view(
+        self,
+        frame,
+        progress: float | None,
+        marker_box: tuple[int, int, int, int] | None,
+    ) -> None:
+        if self._debug_view is None:
+            return
+        boxes = []
+        if progress is not None and marker_box is not None:
+            boxes.append((*marker_box, f"progress {progress:.0%}", (0, 255, 0)))
+        self._debug_view.update(frame, boxes)
+
     def run(self, max_seconds: float = 1200.0) -> bool:
         """Replay levels until the result screen appears. False on timeout."""
         deadline = time.perf_counter() + max_seconds
@@ -204,14 +223,9 @@ class LevelReplayer:
                     print("Result screen detected; replay finished.")
                     return True
 
-                located = locate_marker(frame, self._marker)
-                progress = located[0] if located is not None else None
+                progress, marker_box = self._frame_progress(frame)
                 self._play_due_taps(state, shell, progress, time.perf_counter())
-                if self._debug_view is not None:
-                    boxes = []
-                    if located is not None:
-                        boxes.append((*located[1], f"progress {progress:.0%}", (0, 255, 0)))
-                    self._debug_view.update(frame, boxes)
+                self._update_debug_view(frame, progress, marker_box)
 
                 if progress is None:
                     continue
