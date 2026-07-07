@@ -31,6 +31,10 @@ class AutoRunnerContext:
     debug_tap_count: int = 0
 
 
+class RunnerError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class TemplateTarget:
     name: str
@@ -238,7 +242,7 @@ def run_after_start(
 
     # The gameplay drivers take over after the boost screen's final Play button.
     if not tap_play_with_double_coins_button(ctx):
-        raise SystemExit(1)
+        raise RunnerError()
 
     if mode == "levels":
         from avd_runner.levels import LevelReplayer
@@ -276,7 +280,7 @@ def run_after_start(
             debug_view=ctx.debug_view,
         )
     if not runner.run():
-        raise SystemExit(1)
+        raise RunnerError()
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -355,14 +359,14 @@ def buy_boost_if_available(ctx: AutoRunnerContext, select) -> None:
     if not select(ctx):
         return
     if not tap_boost_buy_button(ctx):
-        raise SystemExit(1)
+        raise RunnerError()
     if not wait_for_template(ctx, "Double Coins Banner", DOUBLE_COINS_BANNER_TEMPLATE, CAPTCHA_BANNER_TEMPLATE):
-        raise SystemExit(1)
+        raise RunnerError()
 
 
 def run_once(ctx: AutoRunnerContext, args: argparse.Namespace) -> None:
     if not tap_play_button(ctx):
-        raise SystemExit(1)
+        raise RunnerError()
 
     seen = wait_for_any_template(
         ctx,
@@ -375,19 +379,19 @@ def run_once(ctx: AutoRunnerContext, args: argparse.Namespace) -> None:
     )
     if seen is None:
         print("Neither the boost-selection nor double-coins screen appeared.")
-        raise SystemExit(1)
+        raise RunnerError()
 
     if seen != "Double Coins Banner":
         if not tap_random_boost_button(ctx):
-            raise SystemExit(1)
+            raise RunnerError()
         if not tap_multi_button(ctx):
-            raise SystemExit(1)
+            raise RunnerError()
         if not tap_double_coins_button(ctx):
-            raise SystemExit(1)
+            raise RunnerError()
         if not tap_multi_buy_button(ctx):
-            raise SystemExit(1)
+            raise RunnerError()
         if not wait_for_template(ctx, "Double Coins Banner", DOUBLE_COINS_BANNER_TEMPLATE, CAPTCHA_BANNER_TEMPLATE):
-            raise SystemExit(1)
+            raise RunnerError()
 
     buy_boost_if_available(ctx, tap_fast_start_0_if_visible)
     buy_boost_if_available(ctx, tap_cookie_relay_0_if_visible)
@@ -400,7 +404,7 @@ def run_once(ctx: AutoRunnerContext, args: argparse.Namespace) -> None:
     run_after_start(ctx, args.mode, args.no_cookie_relay, args.episode)
 
     if not tap_result_ok_button(ctx):
-        raise SystemExit(1)
+        raise RunnerError()
 
     if tap_open_all_mystery_box_button(ctx):
         tap_confirm_mystery_box_button(ctx)
@@ -447,6 +451,8 @@ def main() -> None:
 
             run_number += 1
             wait(args.loop_delay)
+    except RunnerError:
+        raise SystemExit(1)
     finally:
         if ctx.debug_view is not None:
             ctx.debug_view.close()

@@ -83,4 +83,17 @@ except SystemExit:
 else:
     raise AssertionError("--loop-count 0 should be rejected")
 
+# Flow helpers should now be testable without directly raising SystemExit.
+original_tap_play_button = auto_runner.tap_play_button
+try:
+    auto_runner.tap_play_button = lambda _ctx: False
+    try:
+        auto_runner.run_once(ctx, auto_runner.parse_args([]))
+    except auto_runner.RunnerError:
+        pass
+    else:
+        raise AssertionError("run_once should raise RunnerError when Play fails")
+finally:
+    auto_runner.tap_play_button = original_tap_play_button
+
 print("ok")
