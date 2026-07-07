@@ -1,4 +1,6 @@
+import json
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -6,7 +8,14 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import cv2
 
-from avd_runner.levels import load_levels, load_marker, read_progress
+from avd_runner.levels import (
+    TRACE_VERSION,
+    load_levels,
+    load_marker,
+    read_progress,
+    tap_is_due,
+)
+from scripts.record_levels import progress_at_time, save_level
 
 # Progress reading against real frames (skipped if the burst isn't present).
 captures = REPO_ROOT / "captures" / "probe1"
@@ -19,18 +28,34 @@ if captures.exists():
     assert early is not None and late is not None
     assert 0 <= early < 0.1 < 0.7 < late < 0.85, f"early={early}, late={late}"
 
-# The marker-speed fit used for freeze compensation.
-from avd_runner.levels import fit_progress_slope
+# Tap progress is interpolated at finger-down time.
+samples = [(10.0, 0.10), (10.1, 0.12)]
+assert abs(progress_at_time(samples, 10.05) - 0.11) < 1e-9
+assert progress_at_time(samples, 10.5) is None
 
-times = [10 + i * 0.05 for i in range(100)]
-progresses = [(t - 8.0) / 40.0 for t in times]  # 40s level -> slope 0.025/s
-slope = fit_progress_slope(times, progresses)
-assert abs(slope - 0.025) < 1e-6, slope
+# Moving taps use progress; stationary/unobserved taps use elapsed time.
+moving = {"t": 5.0, "progress": 0.25}
+assert not tap_is_due(moving, 0.24, 100.0)
+assert tap_is_due(moving, 0.25, 0.0)
+fallback = {"t": 2.0, "progress": None}
+assert not tap_is_due(fallback, 0.9, 1.9)
+assert tap_is_due(fallback, None, 2.0)
 
-# Freeze compensation: replay froze 1.2% further into the level than the
-# recording did -> its schedule must shift earlier by dp/slope seconds.
-offset = (0.045 - 0.033) / slope
-assert abs(offset - 0.48) < 0.001, offset
+# Saving produces a v5 trace whose taps carry progress, with null reserved for
+# the explicit wall-time fallback when no nearby marker sample exists.
+with tempfile.TemporaryDirectory() as td:
+    directory = Path(td)
+    taps = [
+        {"t": 10.05, "x": 100, "y": 200, "duration": 0.08},
+        {"t": 11.0, "x": 300, "y": 400, "duration": 0.09},
+    ]
+    save_level(directory, 1, 10.0, taps, samples, 12.0)
+    raw = json.loads((directory / "level_01.json").read_text())
+    assert raw["version"] == TRACE_VERSION
+    assert abs(raw["taps"][0]["progress"] - 0.11) < 1e-9
+    assert raw["taps"][1]["progress"] is None
+    loaded = load_levels(directory)
+    assert loaded[1]["taps"] == raw["taps"]
 
 # Recorded traces load and are well-formed (skipped if none recorded yet).
 # One folder per episode: recordings/levels/<episode>/level_NN.json
@@ -44,10 +69,9 @@ if levels_root.exists():
             continue
         assert levels, f"no traces loaded for episode {episode_dir.name}"
         for number, data in levels.items():
-            assert data["p_freeze"] is None or -0.05 < data["p_freeze"] < 1
-            assert data["slope"] is None or data["slope"] > 0
             times = [tap["t"] for tap in data["taps"]]
             assert times == sorted(times), f"{episode_dir.name} level {number} taps out of order"
+            assert all("progress" in tap for tap in data["taps"])
             assert all(tap["duration"] >= 0 for tap in data["taps"])
         print(f"validated episode {episode_dir.name}: levels {sorted(levels)}")
 

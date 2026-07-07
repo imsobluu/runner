@@ -1,25 +1,16 @@
-"""Per-level gameplay replay, synchronized by a symmetric pause handshake.
+"""Per-level gameplay replay driven continuously by observed level progress.
 
-Recording and playback perform the IDENTICAL sequence at every level start:
-detect the level on the progress bar, tap pause, tap Continue, and take t=0
-from the frame where the pause menu disappears. Because both sides interact
-with the game the same way, every latency and game side-effect of pausing
-appears on both sides and cancels. This symmetry is what made the original
-implementation work; do not break it.
-
-The one asymmetry left is WHERE in the level the freeze lands (detection can
-be late by a variable amount when a transition hides the marker). Both sides
-therefore measure the marker's exact position while frozen - it is static
-and readable behind the pause menu - and the replayer shifts its schedule by
-(p_replay - p_record) / marker_speed, a purely local correction that is zero
-when the freeze points match.
+Each moving-phase tap is stored at the progress-marker position observed when
+the player made it. Playback fires that tap when the live marker reaches the
+same position, continuously correcting for start delay and speed variation.
+Wall time is retained only for taps made while the marker is stationary or
+temporarily unavailable.
 """
 from __future__ import annotations
 
 import json
 import random
 import subprocess
-import threading
 import time
 from pathlib import Path
 
@@ -35,7 +26,9 @@ PAUSE_XY = (1194, 37)
 # v2/v3: progress-bar-as-linear-clock, replay without pausing (asymmetric;
 #     desynced badly - kept only as a cautionary tale).
 # v4: v1 symmetric handshake + frozen-marker position compensation.
-TRACE_VERSION = 4
+# v5: each tap is keyed to live level progress; wall time is only a fallback
+#     while the marker is stationary or unavailable.
+TRACE_VERSION = 5
 
 # Progress bar geometry (device px, 1280x720): the gingerbread marker walks
 # a fixed track; its center maps to progress via the calibrated start/end x.
@@ -44,17 +37,12 @@ PROGRESS_START_X, PROGRESS_END_X = 139, 325
 MARKER_THRESHOLD = 0.7
 
 # The marker can be unreadable for seconds around a level transition and
-# reappear a few percent in (up to ~7% observed); the freeze-position
-# compensation absorbs the difference.
+# reappear a few percent in (up to ~7% observed).
 LEVEL_START_MAX = 0.3
 LEVEL_END_MIN = 0.85
 # The marker RESTS at ~0% during the level intro before it starts walking;
-# positions below this carry no timing signal (compensation is skipped, as
-# resting freezes are the same game state on both sides).
+# positions below this carry no useful progress-clock timing signal.
 MOVING_MIN = 0.02
-MOVING_MAX = 0.95
-FREEZE_SAMPLES = 5      # frames averaged to read the frozen marker position
-STALE_TAP_LIMIT = 0.75  # taps already this late at start are skipped
 
 
 def load_marker(assets_dir: Path) -> np.ndarray:
@@ -71,8 +59,10 @@ def continue_template(assets_dir: Path) -> Path:
     return path
 
 
-def read_progress(frame: np.ndarray, marker: np.ndarray) -> float | None:
-    """Level progress in [0..1], or None when the bar is not on screen.
+def locate_marker(
+    frame: np.ndarray, marker: np.ndarray
+) -> tuple[float, tuple[int, int, int, int]] | None:
+    """(progress in [0..1], marker box in device px), or None when off screen.
 
     Subpixel: a parabola through the match scores around the peak recovers
     the marker's fractional position (~0.1px).
@@ -89,22 +79,21 @@ def read_progress(frame: np.ndarray, marker: np.ndarray) -> float | None:
         denom = r[0] - 2 * r[1] + r[2]
         if denom != 0:
             dx = float(np.clip(0.5 * (r[0] - r[2]) / denom, -1, 1))
-    center = STRIP_X1 + x + dx + marker.shape[1] / 2
-    return (center - PROGRESS_START_X) / (PROGRESS_END_X - PROGRESS_START_X)
+    mh, mw = marker.shape[:2]
+    center = STRIP_X1 + x + dx + mw / 2
+    progress = (center - PROGRESS_START_X) / (PROGRESS_END_X - PROGRESS_START_X)
+    box = (STRIP_X1 + x, STRIP_Y1 + y, STRIP_X1 + x + mw, STRIP_Y1 + y + mh)
+    return progress, box
 
 
-def fit_progress_slope(times: list[float], progresses: list[float]) -> float:
-    """Least-squares slope of progress vs time (fraction of level per second)."""
-    if len(times) < 10:
-        raise ValueError(f"Too few progress samples to fit marker speed ({len(times)})")
-    slope, _ = np.polyfit(times, progresses, 1)
-    if slope <= 0:
-        raise ValueError("Progress did not advance; cannot fit marker speed")
-    return float(slope)
+def read_progress(frame: np.ndarray, marker: np.ndarray) -> float | None:
+    """Level progress in [0..1], or None when the bar is not on screen."""
+    located = locate_marker(frame, marker)
+    return located[0] if located is not None else None
 
 
 def load_levels(levels_dir: Path) -> dict[int, dict]:
-    """Map of level number -> {'taps', 'p_freeze', 'slope'}."""
+    """Map of level number to its progress-keyed tap trace."""
     levels = {}
     for path in sorted(Path(levels_dir).glob("level_*.json")):
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -113,16 +102,24 @@ def load_levels(levels_dir: Path) -> dict[int, dict]:
                 f"{path} is trace format v{data.get('version')}; this build needs "
                 f"v{TRACE_VERSION}. Re-record it with scripts/record_levels.py."
             )
-        levels[data["level"]] = {
-            "taps": data["taps"],
-            "p_freeze": data["p_freeze"],
-            "slope": data["slope"],
-        }
+        taps = data["taps"]
+        for tap in taps:
+            if "progress" not in tap:
+                raise ValueError(f"{path} has a tap without recorded progress")
+        levels[data["level"]] = {"taps": taps}
     return levels
 
 
+def tap_is_due(tap: dict, progress: float | None, elapsed: float) -> bool:
+    """Whether a recorded tap is due on the progress clock or time fallback."""
+    recorded_progress = tap["progress"]
+    if recorded_progress is not None and recorded_progress >= MOVING_MIN:
+        return progress is not None and progress >= recorded_progress
+    return elapsed >= tap["t"]
+
+
 class LevelReplayer:
-    """Replays per-level tap traces via the same pause handshake as recording."""
+    """Replays per-level taps against the live progress marker."""
 
     def __init__(
         self,
@@ -131,134 +128,78 @@ class LevelReplayer:
         assets_dir: Path,
         levels_dir: Path,
         exit_template: Path,
+        on_tap=None,  # on_tap(name, frame, x, y): debug hook for handshake taps
+        debug_view=None,  # DebugView; draws marker box and taps live
     ):
         self._device = device
         self._capture = capture
         self._marker = load_marker(assets_dir)
-        self._continue_template = continue_template(assets_dir)
         self._levels = load_levels(levels_dir)
         self._exit_template = exit_template
+        self._on_tap = on_tap
+        self._debug_view = debug_view
         if not self._levels:
             raise ValueError(f"No level recordings in {levels_dir}")
 
     def _tap(self, shell: subprocess.Popen, x: int, y: int, duration: float) -> None:
-        # Small jitter; identical replays run after run look robotic.
+        # Jitter position, duration, and add a few px of down->up drift;
+        # identical zero-travel replays run after run look robotic.
         x += random.randint(-8, 8)
         y += random.randint(-8, 8)
+        x2 = x + random.randint(-3, 3)
+        y2 = y + random.randint(-3, 3)
         ms = max(30, round(duration * 1000 * random.uniform(0.95, 1.05)))
-        assert shell.stdin is not None
-        # '&' lets a long slide-hold overlap the next tap instead of queueing it.
-        shell.stdin.write(f"input swipe {x} {y} {x} {y} {ms} &\n")
-        shell.stdin.flush()
-
-    def _play_trace(
-        self,
-        shell: subprocess.Popen,
-        taps: list[dict],
-        t0: float,
-        stop: threading.Event,
-    ) -> None:
-        for tap in taps:
-            delay = t0 + tap["t"] - time.perf_counter()
-            if delay < -STALE_TAP_LIMIT:
-                print(f"  skipped stale tap at t={tap['t']:.2f}s ({-delay:.2f}s late)")
-                continue
-            if delay > 0 and stop.wait(delay):
-                return
-            if stop.is_set():
-                return
-            self._tap(shell, tap["x"], tap["y"], tap["duration"])
-
-    def _read_frozen_progress(self) -> float | None:
-        """Average the (static) marker position over a few pause-menu frames."""
-        readings = []
-        for _ in range(FREEZE_SAMPLES):
-            progress = read_progress(self._capture.grab(), self._marker)
-            if progress is not None:
-                readings.append(progress)
-            time.sleep(0.05)
-        return float(np.mean(readings)) if readings else None
-
-    def _pause_and_continue(self) -> tuple[float | None, float]:
-        """Pause, read the frozen marker, tap Continue; t0 = menu-gone frame.
-
-        Mirrors the recorder exactly (same taps, same screen-event anchors),
-        so latencies and any game side-effects of pausing cancel out.
-        """
-        p_freeze = None
-        menu_up = False
-        for _ in range(15):  # an intro animation can swallow the pause; retry
-            self._device.tap(*PAUSE_XY)
-            deadline = time.perf_counter() + 1.0
-            while time.perf_counter() < deadline:
-                frame = self._capture.grab()
-                match = find_template(frame, self._continue_template, threshold=0.85)
-                if match:
-                    menu_up = True
-                    break
-                time.sleep(0.05)
-            if menu_up:
-                p_freeze = self._read_frozen_progress()
-                self._device.tap(match.center_x, match.center_y)
-                break
-        if not menu_up:
-            print("WARNING: pause menu never appeared; playing without the handshake.")
-            return None, time.perf_counter()
-
-        deadline = time.perf_counter() + 10.0
-        while time.perf_counter() < deadline:
-            frame = self._capture.grab()
-            now = time.perf_counter()
-            if not find_template(frame, self._continue_template, threshold=0.85):
-                return p_freeze, now
-            time.sleep(0.05)
-        print("WARNING: never saw the pause menu close; timing may be off.")
-        return p_freeze, time.perf_counter()
+        self._device.write_swipe(
+            shell,
+            x,
+            y,
+            x2,
+            y2,
+            ms,
+            background=True,
+            label="jump" if x < 640 else "slide",
+        )
 
     def run(self, max_seconds: float = 1200.0) -> bool:
         """Replay levels until the result screen appears. False on timeout."""
-        shell = subprocess.Popen(
-            self._device.command("shell"), stdin=subprocess.PIPE, text=True, bufsize=1
-        )
+        shell = self._device.open_input_shell()
         deadline = time.perf_counter() + max_seconds
         level = min(self._levels)
         in_level = False
         max_progress = 0.0
         stable_low = 0
         frame_count = 0
-        trace_stop = threading.Event()
+        recorded = None
+        tap_index = 0
+        level_t0 = 0.0
 
         def start_level() -> None:
-            nonlocal in_level, max_progress
+            nonlocal in_level, max_progress, recorded, tap_index, level_t0
             recorded = self._levels.get(level)
-            p_freeze, t0 = self._pause_and_continue()
+            level_t0 = time.perf_counter()
+            tap_index = 0
             if recorded is None:
                 print(f"No recording for level {level}; watching only.")
             else:
-                # Shift the schedule by how much further into the level this
-                # freeze landed compared to the recording's freeze.
-                offset = 0.0
-                if (
-                    p_freeze is not None
-                    and recorded["slope"]
-                    and p_freeze >= MOVING_MIN
-                    and recorded["p_freeze"] >= MOVING_MIN
-                ):
-                    offset = (p_freeze - recorded["p_freeze"]) / recorded["slope"]
                 print(
-                    f"Level {level}: frozen at "
-                    f"{'?' if p_freeze is None else f'{p_freeze:.1%}'} vs recorded "
-                    f"{(recorded.get('p_freeze') or 0.0):.1%}; offset {offset:+.2f}s; "
-                    f"replaying {len(recorded['taps'])} taps."
+                    f"Level {level}: progress-driven replay of "
+                    f"{len(recorded['taps'])} taps."
                 )
-                trace_stop.clear()
-                threading.Thread(
-                    target=self._play_trace,
-                    args=(shell, recorded["taps"], t0 - offset, trace_stop),
-                    daemon=True,
-                ).start()
             in_level = True
             max_progress = 0.0
+
+        def play_due_taps(progress: float | None, now: float) -> None:
+            nonlocal tap_index
+            if recorded is None:
+                return
+            taps = recorded["taps"]
+            while tap_index < len(taps):
+                tap = taps[tap_index]
+                due = tap_is_due(tap, progress, now - level_t0)
+                if not due:
+                    break
+                self._tap(shell, tap["x"], tap["y"], tap["duration"])
+                tap_index += 1
 
         try:
             while time.perf_counter() < deadline:
@@ -270,7 +211,15 @@ class LevelReplayer:
                     print("Result screen detected; replay finished.")
                     return True
 
-                progress = read_progress(frame, self._marker)
+                located = locate_marker(frame, self._marker)
+                progress = located[0] if located is not None else None
+                play_due_taps(progress, time.perf_counter())
+                if self._debug_view is not None:
+                    boxes = []
+                    if located is not None:
+                        boxes.append((*located[1], f"progress {progress:.0%}", (0, 255, 0)))
+                    self._debug_view.update(frame, boxes)
+
                 if progress is None:
                     continue
 
@@ -282,7 +231,6 @@ class LevelReplayer:
                     continue
 
                 if max_progress > LEVEL_END_MIN and progress < LEVEL_START_MAX:
-                    trace_stop.set()
                     print(f"Level {level} finished.")
                     level += 1
                     start_level()
@@ -293,7 +241,6 @@ class LevelReplayer:
             print("Level replay timed out without reaching the result screen.")
             return False
         finally:
-            trace_stop.set()
             if shell.stdin:
                 shell.stdin.close()
             try:

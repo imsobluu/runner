@@ -16,7 +16,6 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import cv2
 
-from avd_runner import AvdDevice
 from avd_runner.capture import WindowCapture
 
 
@@ -30,8 +29,7 @@ def main() -> None:
     out_dir = REPO_ROOT / "captures" / (args.name or time.strftime("%Y%m%d_%H%M%S"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    device_size = AvdDevice.from_env().screen_size()
-    capture = WindowCapture(device_size=device_size)
+    capture = WindowCapture()
 
     interval = 1.0 / args.fps
     frame_count = int(args.seconds * args.fps)

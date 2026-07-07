@@ -25,9 +25,13 @@ if captures.exists():
         ("frame_00082.jpg", None),     # coin/bear wall: no action
     ]:
         frame = cv2.imread(str(captures / frame_name))
-        obstacle, score = detect_obstacle(frame, obstacles)
+        obstacle, score, box = detect_obstacle(frame, obstacles)
         got = obstacle.action if obstacle else None
         assert got == expected, f"{frame_name}: expected {expected}, got {got} (score={score:.2f})"
+        # A detection must report a box; a non-detection must not.
+        assert (box is not None) == (obstacle is not None)
+        if box is not None:
+            assert box[0] < box[2] and box[1] < box[3]
 else:
     print("captures/probe1 missing; skipped real-frame checks")
 

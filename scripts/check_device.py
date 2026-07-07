@@ -3,15 +3,23 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from avd_runner import AvdDevice
+import cv2
+
+from avd_runner.capture import WindowCapture
 
 
 def main() -> None:
-    device = AvdDevice.from_env()
-    width, height = device.screen_size()
-    path = device.save_screenshot("screenshots/check_device.png")
+    capture = WindowCapture()
+    try:
+        frame = capture.grab()
+    finally:
+        capture.close()
+    height, width = frame.shape[:2]
+    path = Path("screenshots/check_device.png")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(path), frame)
 
-    print(f"Device screen: {width}x{height}")
+    print(f"Captured frame: {width}x{height}")
     print(f"Screenshot saved: {path}")
 
 

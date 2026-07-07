@@ -5,12 +5,17 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from avd_runner import AvdDevice, find_template
+from avd_runner.capture import WindowCapture
 
 
 def main() -> None:
     device = AvdDevice.from_env()
-    screen = device.screenshot_bytes()
-    match = find_template(screen, REPO_ROOT / "assets" / "button.png", threshold=0.9)
+    capture = WindowCapture(device_size=device.screen_size())
+    try:
+        frame = capture.grab()
+    finally:
+        capture.close()
+    match = find_template(frame, REPO_ROOT / "assets" / "button.png", threshold=0.9)
 
     if not match:
         print("Button not found")

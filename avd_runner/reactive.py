@@ -66,18 +66,28 @@ def load_obstacles(theme_dir: Path) -> list[Obstacle]:
 def detect_obstacle(
     frame: np.ndarray,
     obstacles: list[Obstacle],
-) -> tuple[Obstacle | None, float]:
-    """Best obstacle match in the lookahead region of a full BGR frame."""
+) -> tuple[Obstacle | None, float, tuple[int, int, int, int] | None]:
+    """Best obstacle match in the lookahead region of a full BGR frame.
+
+    Returns (obstacle, score, box) where box is the match rectangle in
+    full-frame device pixels, or None when nothing matched.
+    """
     region = frame[LOOK_Y1:LOOK_Y2, LOOK_X1:LOOK_X2]
     region = cv2.resize(region, None, fx=MATCH_SCALE, fy=MATCH_SCALE)
     best: Obstacle | None = None
     best_score = MATCH_THRESHOLD
+    best_box: tuple[int, int, int, int] | None = None
     for obstacle in obstacles:
         result = cv2.matchTemplate(region, obstacle.template, cv2.TM_CCOEFF_NORMED)
-        _, score, _, _ = cv2.minMaxLoc(result)
+        _, score, _, loc = cv2.minMaxLoc(result)
         if score >= best_score:
-            best, best_score = obstacle, score
-    return best, best_score
+            th, tw = obstacle.template.shape[:2]
+            x1 = LOOK_X1 + round(loc[0] / MATCH_SCALE)
+            y1 = LOOK_Y1 + round(loc[1] / MATCH_SCALE)
+            best = obstacle
+            best_score = score
+            best_box = (x1, y1, x1 + round(tw / MATCH_SCALE), y1 + round(th / MATCH_SCALE))
+    return best, best_score, best_box
 
 
 class ReactiveRunner:
@@ -95,22 +105,18 @@ class ReactiveRunner:
         theme_dir: Path,
         exit_template: Path,
         relay_template: Path | None = None,
+        debug_view=None,  # DebugView; draws lookahead/detection/taps live
     ):
         self._device = device
         self._capture = capture
         self._obstacles = load_obstacles(theme_dir)
         self._exit_template = exit_template
         self._relay_template = relay_template
+        self._debug_view = debug_view
 
     def run(self, max_seconds: float = 900.0) -> bool:
         """Play until the result screen appears. False on timeout."""
-        shell = subprocess.Popen(
-            self._device.command("shell"),
-            stdin=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-        )
-        assert shell.stdin is not None
+        shell = self._device.open_input_shell()
         deadline = time.perf_counter() + max_seconds
         cooldown_until = 0.0
         frame_count = 0
@@ -126,34 +132,41 @@ class ReactiveRunner:
                     if self._relay_template is not None:
                         match = find_template(frame, self._relay_template, threshold=0.85)
                         if match:
-                            self._tap(shell, match.center_x, match.center_y, 80)
+                            self._tap(shell, match.center_x, match.center_y, 80, "relay")
                             print("Tapped Activate Cookie Relay.")
 
                 now = time.perf_counter()
-                if now >= cooldown_until:
-                    obstacle, score = detect_obstacle(frame, self._obstacles)
-                    if obstacle is not None:
-                        x, y = JUMP_XY if obstacle.action == "jump" else SLIDE_XY
-                        self._tap(shell, x, y, HOLD_MS[obstacle.action])
-                        print(f"{obstacle.action} for {obstacle.name} score={score:.2f}")
-                        cooldown_until = now + ACTION_COOLDOWN
+                obstacle, score, box = detect_obstacle(frame, self._obstacles)
+                if obstacle is not None and now >= cooldown_until:
+                    x, y = JUMP_XY if obstacle.action == "jump" else SLIDE_XY
+                    self._tap(shell, x, y, HOLD_MS[obstacle.action], obstacle.action)
+                    print(f"{obstacle.action} for {obstacle.name} score={score:.2f}")
+                    cooldown_until = now + ACTION_COOLDOWN
+
+                if self._debug_view is not None:
+                    boxes = [(LOOK_X1, LOOK_Y1, LOOK_X2, LOOK_Y2, "lookahead", (0, 255, 0))]
+                    if box is not None:
+                        boxes.append((*box, f"{obstacle.name} {score:.2f}", (0, 0, 255)))
+                    self._debug_view.update(frame, boxes)
 
                 time.sleep(0.005)
 
             print("Reactive run timed out without seeing the result screen.")
             return False
         finally:
-            shell.stdin.close()
+            if shell.stdin:
+                shell.stdin.close()
             try:
                 shell.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 shell.terminate()
 
-    def _tap(self, shell: subprocess.Popen, x: int, y: int, hold_ms: int) -> None:
-        # Jitter position and dwell; identical taps run after run look robotic.
+    def _tap(self, shell: subprocess.Popen, x: int, y: int, hold_ms: int, label: str = "") -> None:
+        # Jitter position, dwell, and add a few px of down->up drift; identical
+        # zero-travel taps run after run look robotic.
         x += random.randint(-25, 25)
         y += random.randint(-20, 20)
+        x2 = x + random.randint(-3, 3)
+        y2 = y + random.randint(-3, 3)
         hold = max(40, round(hold_ms * random.uniform(0.85, 1.15)))
-        assert shell.stdin is not None
-        shell.stdin.write(f"input swipe {x} {y} {x} {y} {hold}\n")
-        shell.stdin.flush()
+        self._device.write_swipe(shell, x, y, x2, y2, hold, label=label)

@@ -1,7 +1,7 @@
 """Fast frame capture of the emulator window via Windows Graphics Capture.
 
-~1ms per grab versus ~300ms for `adb exec-out screencap`. Frames come back
-as BGR numpy arrays in device coordinates, ready for find_template.
+Frames come back as BGR numpy arrays in device coordinates, ready for
+find_template.
 
 WGC captures the window's own surface, so other windows may cover the
 emulator freely. It cannot be *minimized*, though: Windows stops rendering
