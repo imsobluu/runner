@@ -74,6 +74,8 @@ marker = load_marker(REPO_ROOT / "assets")
 mask = marker_mask(marker) > 0
 assert mask.any()
 assert not mask.all()
+assert marker_mask(marker) is marker_mask(marker)
+assert locate_marker(np.full((720, 1280, 3), (160, 80, 200), dtype=np.uint8), marker) is None
 for background in [(15, 25, 35), (160, 80, 200)]:
     frame = np.full((720, 1280, 3), background, dtype=np.uint8)
     x = levels_module.STRIP_X1 + 60
