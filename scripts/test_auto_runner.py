@@ -126,6 +126,22 @@ finally:
     else:
         sys.modules["avd_runner.levels"] = previous
 
+# run_after_start must keep validating levels recordings before the final Play
+# tap, so a bad episode does not spend a run.
+original_tap_play_with_double_coins_button = auto_runner.tap_play_with_double_coins_button
+tap_calls = []
+try:
+    auto_runner.tap_play_with_double_coins_button = lambda _ctx: tap_calls.append("tap") or True
+    try:
+        auto_runner.run_after_start(ctx, "levels", False, "definitely_missing_episode")
+    except auto_runner.RunnerError as exc:
+        assert "No recordings for episode" in str(exc)
+    else:
+        raise AssertionError("missing episode should stop run_after_start")
+    assert tap_calls == []
+finally:
+    auto_runner.tap_play_with_double_coins_button = original_tap_play_with_double_coins_button
+
 # parse_args is now testable without mutating sys.argv.
 args = auto_runner.parse_args(["--mode", "none", "--loop-count", "2"])
 assert args.mode == "none"
