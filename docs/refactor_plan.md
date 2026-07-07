@@ -162,9 +162,11 @@ and needs v5, then still exit `ok`; that is handled compatibility behavior.
   - Risk: high due to timing and progress-bar sensitivity.
   - Verify: unit tests, recorded traces, manual level run.
 
-- [ ] Refactor reactive runner internals only after fake-capture tests.
+- [x] Refactor reactive runner internals only after fake-capture tests.
   - Proposed changes: isolate relay/result polling, obstacle detection, action
     cooldown, and debug update construction.
+  - Status: reactive state, relay/result polling, obstacle action dispatch,
+    cooldown handling, and debug output are isolated behind focused helpers.
   - Risk: high due to latency and obstacle timing.
   - Verify: reactive tests with fixtures and manual run.
 
