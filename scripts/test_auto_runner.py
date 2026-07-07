@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 
 from avd_runner import AvdDevice
+from avd_runner.debug_session import DebugSession
 from avd_runner import menu
 from scripts import auto_runner
 
@@ -25,6 +26,7 @@ frame = np.zeros((8, 8, 3), dtype=np.uint8)
 ctx = auto_runner.AutoRunnerContext(
     device=AvdDevice(),
     capture=FakeCapture(frame),
+    debug=DebugSession(),
     captcha_enabled=False,
 )
 
@@ -41,11 +43,10 @@ assert auto_runner.RESULT_OK_TARGET.attempts == 120
 
 # Debug tap saving is scoped to the context and increments per run directory.
 with tempfile.TemporaryDirectory() as td:
-    ctx.debug_run_dir = Path(td)
-    ctx.debug_tap_count = 0
+    ctx.debug = DebugSession(root=Path(td))
+    ctx.debug.start_run(1)
     menu.debug_save_tap(ctx, "Play Button", frame, 3, 4)
-    assert ctx.debug_tap_count == 1
-    assert (Path(td) / "01_play_button.png").exists()
+    assert (Path(td) / "run1" / "01_play_button.png").exists()
 
 # Episode resolution behavior without touching repo recordings.
 with tempfile.TemporaryDirectory() as td:

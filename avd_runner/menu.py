@@ -13,9 +13,7 @@ class MenuContext(Protocol):
     device: AvdDevice
     capture: Any
     captcha_enabled: bool
-    debug_view: Any | None
-    debug_run_dir: Path | None
-    debug_tap_count: int
+    debug: Any
 
 
 def take_screenshot(ctx: MenuContext):
@@ -25,9 +23,7 @@ def take_screenshot(ctx: MenuContext):
 
 def debug_show(ctx: MenuContext, screen, boxes=()) -> None:
     """Draw the live debug window for a menu frame (no-op unless enabled)."""
-    if ctx.debug_view is None:
-        return
-    ctx.debug_view.update(screen, boxes)
+    ctx.debug.show(screen, boxes)
 
 
 def match_box(match, label: str):
@@ -39,17 +35,7 @@ def match_box(match, label: str):
 
 def debug_save_tap(ctx: MenuContext, name: str, screen, x: int, y: int) -> None:
     """Save the frame a tap was decided on, with a red dot at the tap point."""
-    if ctx.debug_run_dir is None:
-        return
-    import cv2
-
-    frame = screen.copy()
-    cv2.circle(frame, (x, y), 12, (0, 0, 255), -1)
-    cv2.putText(frame, f"{x}, {y}", (x + 18, y + 6), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
-    ctx.debug_tap_count += 1
-    slug = name.lower().replace(" ", "_")
-    ctx.debug_run_dir.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(ctx.debug_run_dir / f"{ctx.debug_tap_count:02d}_{slug}.png"), frame)
+    ctx.debug.save_tap(name, screen, x, y)
 
 
 def solve_captcha_if_present(
@@ -69,7 +55,7 @@ def solve_captcha_if_present(
         ctx.capture,
         banner_template=banner_template,
         on_tap=(lambda name, frame, x, y: debug_save_tap(ctx, name, frame, x, y))
-        if ctx.debug_run_dir is not None
+        if ctx.debug.enabled_for_tap_saves
         else None,
     ):
         print("Failed to solve captcha.")
@@ -129,8 +115,7 @@ def tap_template(
                 continue
             tx, ty = ctx.device.tap(match.center_x, match.center_y, label=name)
             debug_save_tap(ctx, name, confirm, tx, ty)
-            if ctx.debug_view is not None:
-                debug_show(ctx, confirm, match_box(match, name))
+            debug_show(ctx, confirm, match_box(match, name))
             print(
                 f"Tapped {name} at {tx}, {ty} (target {match.center_x}, {match.center_y}) "
                 f"score={match.score:.3f}"

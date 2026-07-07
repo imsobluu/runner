@@ -9,8 +9,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from avd_runner import AvdDevice, wait
+from avd_runner.debug_session import DebugSession
 from avd_runner.menu import (
-    debug_save_tap,
     is_toggle_selected,
     tap_template,
     wait_for_any_template,
@@ -25,10 +25,8 @@ CAPTCHA_BANNER_TEMPLATE = ASSETS / "captcha_banner.png"
 class AutoRunnerContext:
     device: AvdDevice
     capture: object
+    debug: DebugSession
     captcha_enabled: bool = True
-    debug_view: object | None = None
-    debug_run_dir: Path | None = None
-    debug_tap_count: int = 0
 
 
 class RunnerError(RuntimeError):
@@ -253,10 +251,8 @@ def run_after_start(
             ASSETS,
             episode_dir,
             exit_template=RESULT_OK_BUTTON_TEMPLATE,
-            on_tap=(lambda name, frame, x, y: debug_save_tap(ctx, name, frame, x, y))
-            if ctx.debug_run_dir is not None
-            else None,
-            debug_view=ctx.debug_view,
+            on_tap=ctx.debug.save_tap if ctx.debug.enabled_for_tap_saves else None,
+            debug_view=ctx.debug.view,
         )
     if mode == "reactive":
         from avd_runner.reactive import ReactiveRunner
@@ -267,7 +263,7 @@ def run_after_start(
             ASSETS / "witch_oven",
             exit_template=RESULT_OK_BUTTON_TEMPLATE,
             relay_template=relay_template,
-            debug_view=ctx.debug_view,
+            debug_view=ctx.debug.view,
         )
     if mode == "none":
         from avd_runner.none import NoneRunner
@@ -277,7 +273,7 @@ def run_after_start(
             ctx.capture,
             exit_template=RESULT_OK_BUTTON_TEMPLATE,
             relay_template=relay_template,
-            debug_view=ctx.debug_view,
+            debug_view=ctx.debug.view,
         )
     if not runner.run():
         raise RunnerError()
@@ -418,27 +414,23 @@ def main() -> None:
     from avd_runner.capture import WindowCapture
 
     capture = WindowCapture(device_size=device.screen_size())
+    debug_root = None
+    if args.debug:
+        debug_root = REPO_ROOT / "debug" / time.strftime("%Y%m%d_%H%M%S")
+        print(f"Debug tap captures -> {debug_root}")
+    debug = DebugSession(capture=capture, window=args.debug_window, root=debug_root)
+    debug.attach_device(device)
     ctx = AutoRunnerContext(
         device=device,
         capture=capture,
+        debug=debug,
         captcha_enabled=not args.no_captcha,
     )
-    if args.debug_window:
-        from avd_runner.debugview import DebugView
-
-        ctx.debug_view = DebugView(capture=capture)
-        device.on_gesture = ctx.debug_view.mark_swipe
-    debug_session = None
-    if args.debug:
-        debug_session = REPO_ROOT / "debug" / time.strftime("%Y%m%d_%H%M%S")
-        print(f"Debug tap captures -> {debug_session}")
     run_number = 1
 
     try:
         while True:
-            if debug_session is not None:
-                ctx.debug_run_dir = debug_session / f"run{run_number}"
-                ctx.debug_tap_count = 0
+            ctx.debug.start_run(run_number)
             print(f"Starting run {run_number}")
             run_once(ctx, args)
             print(f"Finished run {run_number}")
@@ -454,8 +446,7 @@ def main() -> None:
     except RunnerError:
         raise SystemExit(1)
     finally:
-        if ctx.debug_view is not None:
-            ctx.debug_view.close()
+        ctx.debug.close()
         capture.close()
 
 
