@@ -216,13 +216,13 @@ def resolve_episode_dir(
     if episode:
         path = recordings_dir / episode
         if not path.is_dir():
-            raise SystemExit(
+            raise RunnerError(
                 f"No recordings for episode {episode!r}. Available: {available or 'none'}"
             )
         return path
     if len(available) == 1:
         return recordings_dir / available[0]
-    raise SystemExit(
+    raise RunnerError(
         f"--episode is required when there isn't exactly one recorded episode. "
         f"Available: {available or 'none'}"
     )
@@ -444,7 +444,9 @@ def main() -> None:
 
             run_number += 1
             wait(args.loop_delay)
-    except (MenuAutomationError, RunnerError):
+    except (MenuAutomationError, RunnerError) as exc:
+        if str(exc):
+            print(str(exc))
         raise SystemExit(1)
     finally:
         ctx.debug.close()

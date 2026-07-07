@@ -60,14 +60,14 @@ with tempfile.TemporaryDirectory() as td:
     (root / "ep02").mkdir()
     try:
         auto_runner.resolve_episode_dir(None, root)
-    except SystemExit as exc:
+    except auto_runner.RunnerError as exc:
         assert "--episode is required" in str(exc)
     else:
         raise AssertionError("multiple episodes without explicit choice should exit")
 
     try:
         auto_runner.resolve_episode_dir("missing", root)
-    except SystemExit as exc:
+    except auto_runner.RunnerError as exc:
         assert "No recordings for episode" in str(exc)
     else:
         raise AssertionError("missing episode should exit")
