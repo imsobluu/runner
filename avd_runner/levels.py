@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import random
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
@@ -117,6 +118,18 @@ def tap_is_due(tap: dict, progress: float | None, elapsed: float) -> bool:
     return elapsed >= tap["t"]
 
 
+@dataclass
+class ReplayState:
+    level: int
+    in_level: bool = False
+    max_progress: float = 0.0
+    stable_low: int = 0
+    frame_count: int = 0
+    recorded: dict | None = None
+    tap_index: int = 0
+    level_t0: float = 0.0
+
+
 class LevelReplayer:
     """Replays per-level taps against the live progress marker."""
 
@@ -150,59 +163,50 @@ class LevelReplayer:
         ms = max(30, round(duration * 1000 * random.uniform(0.95, 1.05)))
         shell.swipe(x, y, x2, y2, ms, background=True, label="jump" if x < 640 else "slide")
 
+    def _start_level(self, state: ReplayState) -> None:
+        state.recorded = self._levels.get(state.level)
+        state.level_t0 = time.perf_counter()
+        state.tap_index = 0
+        if state.recorded is None:
+            print(f"No recording for level {state.level}; watching only.")
+        else:
+            print(
+                f"Level {state.level}: progress-driven replay of "
+                f"{len(state.recorded['taps'])} taps."
+            )
+        state.in_level = True
+        state.max_progress = 0.0
+
+    def _play_due_taps(self, state: ReplayState, shell, progress: float | None, now: float) -> None:
+        if state.recorded is None:
+            return
+        taps = state.recorded["taps"]
+        while state.tap_index < len(taps):
+            tap = taps[state.tap_index]
+            due = tap_is_due(tap, progress, now - state.level_t0)
+            if not due:
+                break
+            self._tap(shell, tap["x"], tap["y"], tap["duration"])
+            state.tap_index += 1
+
     def run(self, max_seconds: float = 1200.0) -> bool:
         """Replay levels until the result screen appears. False on timeout."""
         deadline = time.perf_counter() + max_seconds
-        level = min(self._levels)
-        in_level = False
-        max_progress = 0.0
-        stable_low = 0
-        frame_count = 0
-        recorded = None
-        tap_index = 0
-        level_t0 = 0.0
-
-        def start_level() -> None:
-            nonlocal in_level, max_progress, recorded, tap_index, level_t0
-            recorded = self._levels.get(level)
-            level_t0 = time.perf_counter()
-            tap_index = 0
-            if recorded is None:
-                print(f"No recording for level {level}; watching only.")
-            else:
-                print(
-                    f"Level {level}: progress-driven replay of "
-                    f"{len(recorded['taps'])} taps."
-                )
-            in_level = True
-            max_progress = 0.0
-
-        def play_due_taps(progress: float | None, now: float) -> None:
-            nonlocal tap_index
-            if recorded is None:
-                return
-            taps = recorded["taps"]
-            while tap_index < len(taps):
-                tap = taps[tap_index]
-                due = tap_is_due(tap, progress, now - level_t0)
-                if not due:
-                    break
-                self._tap(shell, tap["x"], tap["y"], tap["duration"])
-                tap_index += 1
+        state = ReplayState(level=min(self._levels))
 
         with self._device.input_shell() as shell:
             while time.perf_counter() < deadline:
                 frame = self._capture.grab()
-                frame_count += 1
+                state.frame_count += 1
                 time.sleep(0.02)
 
-                if frame_count % 30 == 0 and find_template(frame, self._exit_template, threshold=0.85):
+                if state.frame_count % 30 == 0 and find_template(frame, self._exit_template, threshold=0.85):
                     print("Result screen detected; replay finished.")
                     return True
 
                 located = locate_marker(frame, self._marker)
                 progress = located[0] if located is not None else None
-                play_due_taps(progress, time.perf_counter())
+                self._play_due_taps(state, shell, progress, time.perf_counter())
                 if self._debug_view is not None:
                     boxes = []
                     if located is not None:
@@ -212,20 +216,20 @@ class LevelReplayer:
                 if progress is None:
                     continue
 
-                if not in_level:
-                    stable_low = stable_low + 1 if progress < LEVEL_START_MAX else 0
-                    if stable_low >= 3:
-                        stable_low = 0
-                        start_level()
+                if not state.in_level:
+                    state.stable_low = state.stable_low + 1 if progress < LEVEL_START_MAX else 0
+                    if state.stable_low >= 3:
+                        state.stable_low = 0
+                        self._start_level(state)
                     continue
 
-                if max_progress > LEVEL_END_MIN and progress < LEVEL_START_MAX:
-                    print(f"Level {level} finished.")
-                    level += 1
-                    start_level()
+                if state.max_progress > LEVEL_END_MIN and progress < LEVEL_START_MAX:
+                    print(f"Level {state.level} finished.")
+                    state.level += 1
+                    self._start_level(state)
                     continue
 
-                max_progress = max(max_progress, progress)
+                state.max_progress = max(state.max_progress, progress)
 
             print("Level replay timed out without reaching the result screen.")
             return False

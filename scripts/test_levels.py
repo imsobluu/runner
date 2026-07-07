@@ -12,6 +12,7 @@ import numpy as np
 from avd_runner import levels as levels_module
 from avd_runner.levels import (
     LevelReplayer,
+    ReplayState,
     TRACE_VERSION,
     load_levels,
     load_marker,
@@ -79,6 +80,39 @@ assert tap_is_due(moving, 0.25, 0.0)
 fallback = {"t": 2.0, "progress": None}
 assert not tap_is_due(fallback, 0.9, 1.9)
 assert tap_is_due(fallback, None, 2.0)
+
+# State helpers start a level and advance only due taps.
+helper_runner = object.__new__(LevelReplayer)
+helper_runner._levels = {
+    1: {
+        "taps": [
+            {"t": 99.0, "progress": 0.2, "x": 100, "y": 200, "duration": 0.08},
+            {"t": 99.0, "progress": 0.4, "x": 700, "y": 200, "duration": 0.09},
+        ]
+    }
+}
+helper_runner._tap = lambda shell, x, y, duration: shell.swipes.append((x, y, duration))
+state = ReplayState(level=1)
+original_perf_counter = levels_module.time.perf_counter
+try:
+    levels_module.time.perf_counter = lambda: 10.0
+    helper_runner._start_level(state)
+    assert state.in_level
+    assert state.max_progress == 0.0
+    assert state.tap_index == 0
+    assert state.level_t0 == 10.0
+
+    shell = FakeShell()
+    helper_runner._play_due_taps(state, shell, progress=0.2, now=10.5)
+    assert shell.swipes == [(100, 200, 0.08)]
+    assert state.tap_index == 1
+    helper_runner._play_due_taps(state, shell, progress=0.39, now=11.0)
+    assert state.tap_index == 1
+    helper_runner._play_due_taps(state, shell, progress=0.4, now=11.0)
+    assert shell.swipes[-1] == (700, 200, 0.09)
+    assert state.tap_index == 2
+finally:
+    levels_module.time.perf_counter = original_perf_counter
 
 # Runner-loop seam with fake progress/input. Three low-progress frames start
 # level 1, a progress-matched tap fires once, progress wraps to level 2, and
