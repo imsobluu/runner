@@ -38,6 +38,7 @@ Use these before committing refactor phases:
 .\.venv\Scripts\python.exe -m compileall avd_runner scripts examples
 .\.venv\Scripts\python.exe scripts\test_auto_runner.py
 .\.venv\Scripts\python.exe scripts\test_device.py
+.\.venv\Scripts\python.exe scripts\test_none.py
 .\.venv\Scripts\python.exe scripts\test_captcha.py
 .\.venv\Scripts\python.exe scripts\test_levels.py
 .\.venv\Scripts\python.exe scripts\test_reactive.py
@@ -127,12 +128,15 @@ and needs v5, then still exit `ok`; that is handled compatibility behavior.
 
 - [ ] Add gameplay runner unit seams with fake capture/device.
   - Files likely affected: `scripts/test_levels.py`, `scripts/test_reactive.py`,
-    `avd_runner/levels.py`, `avd_runner/reactive.py`.
+    `scripts/test_none.py`, `avd_runner/levels.py`, `avd_runner/reactive.py`,
+    `avd_runner/none.py`.
   - Goal: test timing decisions and relay/result checks without real emulator
     state.
+  - Status: `none` mode has fake capture/device coverage; levels/reactive loop
+    seams still need coverage.
   - Risk: medium; fake time/capture can accidentally encode the current
     implementation too tightly.
-  - Verify: levels/reactive tests plus manual run when available.
+  - Verify: none/levels/reactive tests plus manual run when available.
 
 - [ ] Add capture-facing smoke docs/checklist.
   - Files likely affected: `README.md` or this document.

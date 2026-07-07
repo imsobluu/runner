@@ -124,6 +124,7 @@ scripts/               Game-specific entry points
   check_device.py      Sanity check: saves one WGC frame
   test_auto_runner.py  Self-checks for auto-runner orchestration policy
   test_device.py       Self-checks for input-shell lifecycle behavior
+  test_none.py         Self-checks for the no-gameplay runner loop
   test_levels.py       Self-checks for progress reading + recorded trace shape
   test_reactive.py     Self-checks for obstacle template loading + detection
                        against captured frames
@@ -162,6 +163,7 @@ Plain-Python assert scripts, no framework:
 .venv\Scripts\python.exe scripts\test_captcha.py
 .venv\Scripts\python.exe scripts\test_auto_runner.py
 .venv\Scripts\python.exe scripts\test_device.py
+.venv\Scripts\python.exe scripts\test_none.py
 ```
 
 Checks that need captured frames or recorded traces skip themselves when
