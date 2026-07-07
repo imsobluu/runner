@@ -373,10 +373,7 @@ def buy_boost_if_available(ctx: AutoRunnerContext, select) -> None:
         raise RunnerError()
 
 
-def run_once(ctx: AutoRunnerContext, args: argparse.Namespace) -> None:
-    if not tap_play_button(ctx):
-        raise RunnerError()
-
+def ensure_double_coins_setup(ctx: AutoRunnerContext) -> None:
     seen = wait_for_any_template(
         ctx,
         [
@@ -390,28 +387,32 @@ def run_once(ctx: AutoRunnerContext, args: argparse.Namespace) -> None:
         print("Neither the boost-selection nor double-coins screen appeared.")
         raise RunnerError()
 
-    if seen != "Double Coins Banner":
-        if not tap_random_boost_button(ctx):
-            raise RunnerError()
-        if not tap_multi_button(ctx):
-            raise RunnerError()
-        if not tap_double_coins_button(ctx):
-            raise RunnerError()
-        if not tap_multi_buy_button(ctx):
-            raise RunnerError()
-        if not wait_for_template(ctx, "Double Coins Banner", DOUBLE_COINS_BANNER_TEMPLATE, CAPTCHA_BANNER_TEMPLATE):
-            raise RunnerError()
+    if seen == "Double Coins Banner":
+        return
 
+    if not tap_random_boost_button(ctx):
+        raise RunnerError()
+    if not tap_multi_button(ctx):
+        raise RunnerError()
+    if not tap_double_coins_button(ctx):
+        raise RunnerError()
+    if not tap_multi_buy_button(ctx):
+        raise RunnerError()
+    if not wait_for_template(ctx, "Double Coins Banner", DOUBLE_COINS_BANNER_TEMPLATE, CAPTCHA_BANNER_TEMPLATE):
+        raise RunnerError()
+
+
+def buy_optional_boosts(ctx: AutoRunnerContext, skip_top_row_boosts: bool) -> None:
     buy_boost_if_available(ctx, tap_fast_start_0_if_visible)
     buy_boost_if_available(ctx, tap_cookie_relay_0_if_visible)
 
-    if not args.skip_top_row_boosts:
+    if not skip_top_row_boosts:
         tap_double_xp_if_visible(ctx)
         tap_power_jelly_boost_if_visible(ctx)
         tap_hp_extension_if_visible(ctx)
 
-    run_after_start(ctx, args.mode, args.no_cookie_relay, args.episode)
 
+def clear_results(ctx: AutoRunnerContext) -> None:
     if not tap_result_ok_button(ctx):
         raise RunnerError()
 
@@ -419,6 +420,16 @@ def run_once(ctx: AutoRunnerContext, args: argparse.Namespace) -> None:
         tap_confirm_mystery_box_button(ctx)
 
     tap_level_up_confirm_button(ctx)
+
+
+def run_once(ctx: AutoRunnerContext, args: argparse.Namespace) -> None:
+    if not tap_play_button(ctx):
+        raise RunnerError()
+
+    ensure_double_coins_setup(ctx)
+    buy_optional_boosts(ctx, args.skip_top_row_boosts)
+    run_after_start(ctx, args.mode, args.no_cookie_relay, args.episode)
+    clear_results(ctx)
 
 
 def main() -> None:
