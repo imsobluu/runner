@@ -154,9 +154,11 @@ and needs v5, then still exit `ok`; that is handled compatibility behavior.
   - Risk: high without fixtures; medium with fixtures.
   - Verify: captcha fixtures plus live captcha run.
 
-- [ ] Refactor level replay internals only after timing tests.
+- [x] Refactor level replay internals only after timing tests.
   - Proposed changes: isolate level state machine, tap scheduling, progress
     reading, and exit detection.
+  - Status: replay state, level start, due-tap playback, frame progress, and
+    debug output are isolated behind focused helpers.
   - Risk: high due to timing and progress-bar sensitivity.
   - Verify: unit tests, recorded traces, manual level run.
 
