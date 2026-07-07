@@ -1,5 +1,6 @@
 import sys
 import tempfile
+import types
 from contextlib import redirect_stderr
 from io import StringIO
 from pathlib import Path
@@ -71,6 +72,59 @@ with tempfile.TemporaryDirectory() as td:
         assert "No recordings for episode" in str(exc)
     else:
         raise AssertionError("missing episode should exit")
+
+# Gameplay runner construction is isolated from the final Play tap and can be
+# checked without loading real gameplay assets.
+ctx.debug = DebugSession()
+
+def fake_runner_module(module_name, class_name):
+    module = types.ModuleType(module_name)
+    instances = []
+
+    class FakeRunner:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+            instances.append(self)
+
+        def run(self):
+            return True
+
+    setattr(module, class_name, FakeRunner)
+    previous = sys.modules.get(module_name)
+    sys.modules[module_name] = module
+    return previous, instances
+
+
+previous, instances = fake_runner_module("avd_runner.none", "NoneRunner")
+try:
+    runner = auto_runner.build_gameplay_runner(
+        ctx,
+        "none",
+        auto_runner.ACTIVATE_COOKIE_RELAY_TEMPLATE,
+        None,
+    )
+    assert runner is instances[0]
+    assert instances[0].kwargs["exit_template"] == auto_runner.RESULT_OK_BUTTON_TEMPLATE
+    assert instances[0].kwargs["relay_template"] == auto_runner.ACTIVATE_COOKIE_RELAY_TEMPLATE
+finally:
+    if previous is None:
+        del sys.modules["avd_runner.none"]
+    else:
+        sys.modules["avd_runner.none"] = previous
+
+previous, instances = fake_runner_module("avd_runner.levels", "LevelReplayer")
+try:
+    episode_dir = Path("recordings/levels/ep01")
+    runner = auto_runner.build_gameplay_runner(ctx, "levels", None, episode_dir)
+    assert runner is instances[0]
+    assert instances[0].args[2] == auto_runner.ASSETS
+    assert instances[0].args[3] == episode_dir
+finally:
+    if previous is None:
+        del sys.modules["avd_runner.levels"]
+    else:
+        sys.modules["avd_runner.levels"] = previous
 
 # parse_args is now testable without mutating sys.argv.
 args = auto_runner.parse_args(["--mode", "none", "--loop-count", "2"])

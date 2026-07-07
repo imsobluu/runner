@@ -228,6 +228,50 @@ def resolve_episode_dir(
     )
 
 
+def build_gameplay_runner(
+    ctx: AutoRunnerContext,
+    mode: str,
+    relay_template: Path | None,
+    episode_dir: Path | None,
+):
+    if mode == "levels":
+        if episode_dir is None:
+            raise RunnerError("Episode recordings are required for levels mode.")
+        from avd_runner.levels import LevelReplayer
+
+        return LevelReplayer(
+            ctx.device,
+            ctx.capture,
+            ASSETS,
+            episode_dir,
+            exit_template=RESULT_OK_BUTTON_TEMPLATE,
+            on_tap=ctx.debug.save_tap if ctx.debug.enabled_for_tap_saves else None,
+            debug_view=ctx.debug.view,
+        )
+    if mode == "reactive":
+        from avd_runner.reactive import ReactiveRunner
+
+        return ReactiveRunner(
+            ctx.device,
+            ctx.capture,
+            ASSETS / "witch_oven",
+            exit_template=RESULT_OK_BUTTON_TEMPLATE,
+            relay_template=relay_template,
+            debug_view=ctx.debug.view,
+        )
+    if mode == "none":
+        from avd_runner.none import NoneRunner
+
+        return NoneRunner(
+            ctx.device,
+            ctx.capture,
+            exit_template=RESULT_OK_BUTTON_TEMPLATE,
+            relay_template=relay_template,
+            debug_view=ctx.debug.view,
+        )
+    raise RunnerError(f"Unknown gameplay mode: {mode}")
+
+
 def run_after_start(
     ctx: AutoRunnerContext,
     mode: str,
@@ -243,39 +287,7 @@ def run_after_start(
     if not tap_play_with_double_coins_button(ctx):
         raise RunnerError()
 
-    if mode == "levels":
-        from avd_runner.levels import LevelReplayer
-
-        runner = LevelReplayer(
-            ctx.device,
-            ctx.capture,
-            ASSETS,
-            episode_dir,
-            exit_template=RESULT_OK_BUTTON_TEMPLATE,
-            on_tap=ctx.debug.save_tap if ctx.debug.enabled_for_tap_saves else None,
-            debug_view=ctx.debug.view,
-        )
-    if mode == "reactive":
-        from avd_runner.reactive import ReactiveRunner
-
-        runner = ReactiveRunner(
-            ctx.device,
-            ctx.capture,
-            ASSETS / "witch_oven",
-            exit_template=RESULT_OK_BUTTON_TEMPLATE,
-            relay_template=relay_template,
-            debug_view=ctx.debug.view,
-        )
-    if mode == "none":
-        from avd_runner.none import NoneRunner
-
-        runner = NoneRunner(
-            ctx.device,
-            ctx.capture,
-            exit_template=RESULT_OK_BUTTON_TEMPLATE,
-            relay_template=relay_template,
-            debug_view=ctx.debug.view,
-        )
+    runner = build_gameplay_runner(ctx, mode, relay_template, episode_dir)
     if not runner.run():
         raise RunnerError()
 
