@@ -102,15 +102,19 @@ avd_runner/            Reusable library (device I/O, vision, capture, gameplay d
                        obstacle templates are data (see assets/witch_oven)
   none.py              NoneRunner: plays nothing; taps the relay banner and
                        waits for the result screen (--mode none)
+  menu.py              Menu-phase screenshot/template/tap helpers shared by
+                       the full bot and tests
+  debug_session.py     Owns debug output state for saved tap frames and the
+                       live debug window
+  debugview.py         Live OpenCV overlay window used by --debug-window
   captcha.py           Anti-bot captcha solver: detects the modal, measures
                        per-cell motion across frames, picks the outlier cards
   __init__.py          Re-exports the device/vision/captcha API (capture,
                        levels and reactive are imported explicitly)
 
 scripts/               Game-specific entry points
-  auto_runner.py       The full farming bot (see modes above). Also contains
-                       the menu-phase helpers (tap_template, wait_for_template,
-                       boost purchasing, mystery boxes)
+  auto_runner.py       The full farming bot (see modes above): orchestration,
+                       menu policy, boost purchasing, mystery boxes
   record_levels.py     Placeholder for a future Windows-native trace recorder
   record_frames.py     Save a burst of gameplay frames (JPEG) for offline
                        analysis: --seconds, --fps, --name -> captures/<name>/
@@ -118,6 +122,8 @@ scripts/               Game-specific entry points
                        atlases (assets/kakaoBC_HD/*.plist); frame names encode
                        jump/slide actions. Reference/catalog tooling.
   check_device.py      Sanity check: saves one WGC frame
+  test_auto_runner.py  Self-checks for auto-runner orchestration policy
+  test_device.py       Self-checks for input-shell lifecycle behavior
   test_levels.py       Self-checks for progress reading + recorded trace shape
   test_reactive.py     Self-checks for obstacle template loading + detection
                        against captured frames
@@ -154,6 +160,8 @@ Plain-Python assert scripts, no framework:
 .venv\Scripts\python.exe scripts\test_levels.py
 .venv\Scripts\python.exe scripts\test_reactive.py
 .venv\Scripts\python.exe scripts\test_captcha.py
+.venv\Scripts\python.exe scripts\test_auto_runner.py
+.venv\Scripts\python.exe scripts\test_device.py
 ```
 
 Checks that need captured frames or recorded traces skip themselves when
