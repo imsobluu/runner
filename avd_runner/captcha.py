@@ -71,23 +71,10 @@ def solve_captcha(
             print("Captcha dismissed.")
             return True
 
-        solution = _solve_round(capture, frame_delay, frame_count)
-        if not solution.confident:
-            # Likely captured mid-transition. One re-capture is far cheaper
-            # than a wrong answer, which resets round progress to 3/3.
-            solution = _solve_round(capture, frame_delay, frame_count)
+        solution = _solve_round_with_retry(capture, frame_delay, frame_count)
         centers = _scaled_centers(capture.grab())
         debug_screen = capture.grab() if on_tap else None
-        for index in solution.outliers:
-            x, y = centers[index]
-            tx, ty = device.tap(x, y, label=f"captcha_card_{index + 1}")
-            if on_tap:
-                on_tap(f"captcha_card_{index + 1}", debug_screen, tx, ty)
-            # A tapped card plays a disappear animation and the popup ignores
-            # the next tap until it finishes; wait for the cell to change
-            # instead of guessing a delay.
-            if not _wait_card_gone(capture, index):
-                print(f"Captcha card {index + 1} never disappeared; continuing anyway.")
+        _tap_solution_cards(device, capture, solution, centers, debug_screen, on_tap)
 
         confidence = "confident" if solution.confident else "LOW CONFIDENCE"
         print(
@@ -104,6 +91,39 @@ def solve_captcha(
         print(f"Captcha still present after {max_rounds} rounds; giving up.")
         return False
     return True
+
+
+def _solve_round_with_retry(
+    capture,
+    frame_delay: float,
+    frame_count: int,
+) -> CaptchaSolution:
+    solution = _solve_round(capture, frame_delay, frame_count)
+    if not solution.confident:
+        # Likely captured mid-transition. One re-capture is far cheaper
+        # than a wrong answer, which resets round progress to 3/3.
+        solution = _solve_round(capture, frame_delay, frame_count)
+    return solution
+
+
+def _tap_solution_cards(
+    device: AvdDevice,
+    capture,
+    solution: CaptchaSolution,
+    centers: list[tuple[int, int]],
+    debug_screen,
+    on_tap,
+) -> None:
+    for index in solution.outliers:
+        x, y = centers[index]
+        tx, ty = device.tap(x, y, label=f"captcha_card_{index + 1}")
+        if on_tap:
+            on_tap(f"captcha_card_{index + 1}", debug_screen, tx, ty)
+        # A tapped card plays a disappear animation and the popup ignores
+        # the next tap until it finishes; wait for the cell to change
+        # instead of guessing a delay.
+        if not _wait_card_gone(capture, index):
+            print(f"Captcha card {index + 1} never disappeared; continuing anyway.")
 
 
 def _wait_card_gone(

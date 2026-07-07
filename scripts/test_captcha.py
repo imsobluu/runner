@@ -20,6 +20,15 @@ class FakeCapture:
         return frame
 
 
+class FakeDevice:
+    def __init__(self):
+        self.taps = []
+
+    def tap(self, x, y, label=""):
+        self.taps.append((x, y, label))
+        return x + 1, y + 1
+
+
 def synthetic_captcha_frame(cell_values, *, width=1280, height=720):
     """Build a full BGR frame with controlled grayscale values per captcha cell."""
     frame = np.zeros((height, width, 3), dtype=np.uint8)
@@ -72,5 +81,47 @@ try:
     assert solution.confident
 finally:
     captcha.wait = original_wait
+
+# Low-confidence rounds are re-captured exactly once; confident rounds are not.
+original_solve_round = captcha._solve_round
+solutions = [
+    captcha.CaptchaSolution((0, 1), (5.0, 6.0, 7.0), False),
+    captcha.CaptchaSolution((2, 3), (0.0, 0.0, 10.0), True),
+]
+try:
+    captcha._solve_round = lambda *_args: solutions.pop(0)
+    solution = captcha._solve_round_with_retry(FakeCapture([]), 0.0, 3)
+    assert solution.outliers == (2, 3)
+    assert solutions == []
+finally:
+    captcha._solve_round = original_solve_round
+
+# Tapping a solution preserves card order, labels, debug callback coordinates,
+# and waits for each card to disappear.
+device = FakeDevice()
+gone_checks = []
+debug_taps = []
+original_wait_card_gone = captcha._wait_card_gone
+try:
+    captcha._wait_card_gone = lambda _capture, index: gone_checks.append(index) or True
+    captcha._tap_solution_cards(
+        device,
+        FakeCapture([]),
+        captcha.CaptchaSolution((4, 1), (), True),
+        [(10, 20), (30, 40), (0, 0), (0, 0), (50, 60), (0, 0)],
+        "debug-frame",
+        lambda name, frame, x, y: debug_taps.append((name, frame, x, y)),
+    )
+    assert device.taps == [
+        (50, 60, "captcha_card_5"),
+        (30, 40, "captcha_card_2"),
+    ]
+    assert debug_taps == [
+        ("captcha_card_5", "debug-frame", 51, 61),
+        ("captcha_card_2", "debug-frame", 31, 41),
+    ]
+    assert gone_checks == [4, 1]
+finally:
+    captcha._wait_card_gone = original_wait_card_gone
 
 print("ok")
