@@ -132,8 +132,8 @@ and needs v5, then still exit `ok`; that is handled compatibility behavior.
     `avd_runner/none.py`.
   - Goal: test timing decisions and relay/result checks without real emulator
     state.
-  - Status: `none` mode has fake capture/device coverage; levels/reactive loop
-    seams still need coverage.
+  - Status: `none` mode and reactive cooldown/result-exit behavior have fake
+    capture/device coverage; levels loop seams still need coverage.
   - Risk: medium; fake time/capture can accidentally encode the current
     implementation too tightly.
   - Verify: none/levels/reactive tests plus manual run when available.
