@@ -35,6 +35,7 @@ TRACE_VERSION = 5
 STRIP_Y1, STRIP_Y2, STRIP_X1, STRIP_X2 = 100, 140, 120, 355
 PROGRESS_START_X, PROGRESS_END_X = 139, 325
 MARKER_THRESHOLD = 0.7
+MARKER_MASK_MIN = 8
 
 # The marker can be unreadable for seconds around a level transition and
 # reappear a few percent in (up to ~7% observed).
@@ -59,6 +60,11 @@ def continue_template(assets_dir: Path) -> Path:
     return path
 
 
+def marker_mask(marker: np.ndarray) -> np.ndarray:
+    """Foreground mask for the cookie marker; excludes background pixels."""
+    return np.where(np.any(marker > MARKER_MASK_MIN, axis=2), 255, 0).astype("uint8")
+
+
 def locate_marker(
     frame: np.ndarray, marker: np.ndarray
 ) -> tuple[float, tuple[int, int, int, int]] | None:
@@ -68,7 +74,8 @@ def locate_marker(
     the marker's fractional position (~0.1px).
     """
     strip = frame[STRIP_Y1:STRIP_Y2, STRIP_X1:STRIP_X2]
-    result = cv2.matchTemplate(strip, marker, cv2.TM_CCOEFF_NORMED)
+    result = cv2.matchTemplate(strip, marker, cv2.TM_CCORR_NORMED, mask=marker_mask(marker))
+    result = np.nan_to_num(result, nan=-1.0, posinf=-1.0, neginf=-1.0)
     _, score, _, loc = cv2.minMaxLoc(result)
     if score < MARKER_THRESHOLD:
         return None

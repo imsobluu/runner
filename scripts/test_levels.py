@@ -14,8 +14,10 @@ from avd_runner.levels import (
     LevelReplayer,
     ReplayState,
     TRACE_VERSION,
+    locate_marker,
     load_levels,
     load_marker,
+    marker_mask,
     read_progress,
     tap_is_due,
 )
@@ -65,10 +67,29 @@ class FakeDebugView:
     def update(self, frame, boxes):
         self.updates.append((frame, boxes))
 
+# Marker matching should depend on the cookie marker, not the background behind
+# it. During cookie skills the progress-bar background changes, but the marker
+# foreground still needs to be found.
+marker = load_marker(REPO_ROOT / "assets")
+mask = marker_mask(marker) > 0
+assert mask.any()
+assert not mask.all()
+for background in [(15, 25, 35), (160, 80, 200)]:
+    frame = np.full((720, 1280, 3), background, dtype=np.uint8)
+    x = levels_module.STRIP_X1 + 60
+    y = levels_module.STRIP_Y1 + 8
+    crop = frame[y : y + marker.shape[0], x : x + marker.shape[1]]
+    crop[mask] = marker[mask]
+    located = locate_marker(frame, marker)
+    assert located is not None
+    progress, box = located
+    assert abs(box[0] - x) <= 1
+    assert abs(box[1] - y) <= 1
+    assert 0.0 <= progress <= 1.0
+
 # Progress reading against real frames (skipped if the burst isn't present).
 captures = REPO_ROOT / "captures" / "probe1"
 if captures.exists():
-    marker = load_marker(REPO_ROOT / "assets")
     cutscene = read_progress(cv2.imread(str(captures / "frame_00016.jpg")), marker)
     assert cutscene is None, f"cutscene should have no progress bar, got {cutscene}"
     early = read_progress(cv2.imread(str(captures / "frame_00091.jpg")), marker)
