@@ -21,7 +21,8 @@ from avd_runner.levels import (
     read_progress,
     tap_is_due,
 )
-from scripts.record_levels import progress_at_time, save_level
+from scripts import record_levels
+from scripts.record_levels import device_point_from_cursor, progress_at_time, save_level
 
 
 class FakeCapture:
@@ -103,6 +104,17 @@ if captures.exists():
 samples = [(10.0, 0.10), (10.1, 0.12)]
 assert abs(progress_at_time(samples, 10.05) - 0.11) < 1e-9
 assert progress_at_time(samples, 10.5) is None
+
+# Cursor positions map from the render-window rectangle to device coordinates.
+fake_capture = type("FakeWindowCapture", (), {"_render_hwnd": 123, "_device_size": (1280, 720)})()
+original_window_rect = record_levels._window_rect
+try:
+    record_levels._window_rect = lambda _hwnd: (100, 200, 1380, 920)
+    assert device_point_from_cursor(fake_capture, 100, 200) == (0, 0)
+    assert device_point_from_cursor(fake_capture, 740, 560) == (640, 360)
+    assert device_point_from_cursor(fake_capture, 99, 560) is None
+finally:
+    record_levels._window_rect = original_window_rect
 
 # Moving taps use progress; stationary/unobserved taps use elapsed time.
 moving = {"t": 5.0, "progress": 0.25}

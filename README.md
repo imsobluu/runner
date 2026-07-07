@@ -70,11 +70,11 @@ Trace format is v5; older recordings are rejected with a message to re-record.
 ## Recording per-level traces
 
 The game is organized into episodes (e.g. Episode 1: Escape from the Oven),
-each made of several levels. Recording is currently unavailable after removing
-the old touch-event backend; `scripts/record_levels.py` is a placeholder until
-a Windows-native input recorder is added.
+each made of several levels. The recorder samples WGC frames for progress and
+records your real mouse clicks inside the LDPlayer render window. Start it
+before the first level begins, then play manually.
 
-Record one episode at a time once recording is re-enabled:
+Record one episode at a time:
 
 ```powershell
 .venv\Scripts\python.exe -u scripts\record_levels.py --episode ep01
@@ -115,7 +115,7 @@ avd_runner/            Reusable library (device I/O, vision, capture, gameplay d
 scripts/               Game-specific entry points
   auto_runner.py       The full farming bot (see modes above): orchestration,
                        menu policy, boost purchasing, mystery boxes
-  record_levels.py     Placeholder for a future Windows-native trace recorder
+  record_levels.py     Windows-native manual trace recorder for level taps
   record_frames.py     Save a burst of gameplay frames (JPEG) for offline
                        analysis: --seconds, --fps, --name -> captures/<name>/
   extract_sprites.py   Slice sprites out of the game APK's TexturePacker
