@@ -172,6 +172,9 @@ class WindowCapture:
         return np.ascontiguousarray(frame)
 
     def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         self._control.stop()
 
     def __enter__(self) -> "WindowCapture":

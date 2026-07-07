@@ -37,6 +37,7 @@ Use these before committing refactor phases:
 ```powershell
 .\.venv\Scripts\python.exe -m compileall avd_runner scripts examples
 .\.venv\Scripts\python.exe scripts\test_auto_runner.py
+.\.venv\Scripts\python.exe scripts\test_capture.py
 .\.venv\Scripts\python.exe scripts\test_device.py
 .\.venv\Scripts\python.exe scripts\test_none.py
 .\.venv\Scripts\python.exe scripts\test_captcha.py
@@ -170,9 +171,11 @@ and needs v5, then still exit `ok`; that is handled compatibility behavior.
   - Risk: high due to latency and obstacle timing.
   - Verify: reactive tests with fixtures and manual run.
 
-- [ ] Consider capture abstraction cleanup.
+- [x] Consider capture abstraction cleanup.
   - Proposed changes: keep `WindowCapture` as the sole capture implementation,
     but clarify lifecycle and close semantics.
+  - Status: `WindowCapture.close()` is idempotent and covered by a lifecycle
+    test that does not start WGC.
   - Risk: medium/high because WGC behavior is platform-specific.
   - Verify: Windows manual capture check and compile/tests.
 
