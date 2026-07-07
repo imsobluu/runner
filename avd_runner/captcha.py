@@ -140,7 +140,6 @@ def _wait_card_gone(
     # still card differs by <3 frame to frame, a vanished card by >30.
     """
     import cv2
-    import numpy as np
 
     baseline = None
     boxes = None
@@ -150,11 +149,10 @@ def _wait_card_gone(
         if boxes is None:
             height, width = screen.shape[:2]
             boxes = _scaled_boxes(width, height)
-        x1, y1, x2, y2 = boxes[cell_index]
-        crop = screen[y1:y2, x1:x2].astype("int16")
+        crop = _cell_crop(screen, boxes[cell_index])
         if baseline is None:
             baseline = crop
-        elif float(np.abs(crop - baseline).mean()) > threshold:
+        elif _crop_changed(crop, baseline, threshold):
             return True
         wait(0.05)
     return False
@@ -172,8 +170,8 @@ def _wait_new_round(
     Returns early when the popup disappears entirely (the final round has no
     new deal). On timeout the caller just solves against whatever is shown.
     """
-    import cv2
     import numpy as np
+    import cv2
 
     baselines: dict[int, np.ndarray] = {}
     boxes = None
@@ -188,16 +186,26 @@ def _wait_new_round(
             boxes = _scaled_boxes(width, height)
         changed = 0
         for cell in tapped_cells:
-            x1, y1, x2, y2 = boxes[cell]
-            crop = screen[y1:y2, x1:x2].astype("int16")
+            crop = _cell_crop(screen, boxes[cell])
             if cell not in baselines:
                 baselines[cell] = crop
-            elif float(np.abs(crop - baselines[cell]).mean()) > threshold:
+            elif _crop_changed(crop, baselines[cell], threshold):
                 changed += 1
         if changed == len(tapped_cells):
             return
         wait(0.1)
     print("Captcha board did not re-deal within timeout; solving current state.")
+
+
+def _cell_crop(screen, box: tuple[int, int, int, int]):
+    x1, y1, x2, y2 = box
+    return screen[y1:y2, x1:x2].astype("int16")
+
+
+def _crop_changed(crop, baseline, threshold: float) -> bool:
+    import numpy as np
+
+    return float(np.abs(crop - baseline).mean()) > threshold
 
 
 def _solve_round(

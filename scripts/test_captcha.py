@@ -63,6 +63,8 @@ small_frame = np.zeros((360, 640, 3), dtype=np.uint8)
 assert captcha._scale(small_frame) == (0.5, 0.5)
 assert captcha._scaled_centers(small_frame)[0] == (218, 150)
 assert captcha._scaled_boxes(640, 360)[0] == (179, 102, 257, 198)
+assert not captcha._crop_changed(np.zeros((2, 2), dtype=np.int16), np.ones((2, 2), dtype=np.int16), 1.0)
+assert captcha._crop_changed(np.zeros((2, 2), dtype=np.int16), np.ones((2, 2), dtype=np.int16) * 3, 1.0)
 
 # Synthetic full-frame fixtures exercise crop geometry + motion scoring
 # together. Cells 0 and 3 stay still; the other four move between frames.
