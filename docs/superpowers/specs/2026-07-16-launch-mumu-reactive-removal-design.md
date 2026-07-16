@@ -10,7 +10,8 @@ reactive runner.
 
 Change only `scripts/launch_mumu_cookierun.py`:
 
-- Remove the launcher-only reactive asset and result-template constants.
+- Remove the launcher-local constants that reference the reactive theme assets
+  and result template. Keep the referenced asset files unchanged.
 - Remove `run_reactive_gameplay`.
 - Remove reactive parameters from `run_friend_farm_sequence`.
 - Return success immediately after the `play_3` template is tapped.
