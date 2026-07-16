@@ -25,6 +25,65 @@ $env:ANDROID_SERIAL = "emulator-5554"   # target device if several are connected
 $env:ADB_PATH = "C:\path\to\adb.exe"    # adb binary if not on PATH
 ```
 
+## Launch all MuMu instances into Cookie Run
+
+```powershell
+.venv\Scripts\python.exe scripts\launch_mumu_cookierun.py
+```
+
+The launcher reads MuMu's configured VM directories, starts each player through
+`MuMuManager.exe`/`MuMuNxMain.exe`, verifies a live ADB transport and Android
+package-manager readiness,
+then opens Cookie Run (`com.devsisters.crg`) with Android `am start`. Instances
+run in parallel. It waits for every Cookie Run render surface to remain in
+landscape before arranging their windows across the desktop in a grid
+using the Windows API before any `--friend-farm` automation begins. Pass
+`--no-arrange` to preserve existing window
+positions, or set an explicit layout such as `--grid 3x1`. MuMu ADB targets
+are read from each VM's
+`vm.nat.port_forward.adb.host_port` config and connected as
+`127.0.0.1:<port>`, so the launcher does not collide with LDPlayer's
+`emulator-*` serials. If MuMu is installed in a non-default location, pass
+`--manager "C:\path\to\MuMuManager.exe"` or set `$env:MUMU_MANAGER_PATH`.
+Use `--instances 0-3` to target a fixed range, or `--no-start-players` to only
+open Cookie Run on currently connected ADB devices.
+
+Pass `--friend-farm` to run the following image-driven sequence concurrently
+on every launched instance:
+`devplay_login.png → play.png → confirm.png → pause.png → quit.png → quit.png`,
+then `enter nickname → confirm.png → close all x/confirm modals`. Each
+instance receives a separately generated nickname. Finally, Chrome opens
+`https://cookierunglobal.onelink.me/Xr0A/ohypcxa4`, then another modal-cleanup
+step runs, followed by `episode.png → xp-elixir_workshop.png → enter.png`.
+Modal cleanup uses the transparent `confirm_no_bg.png` and `x_no_bg.png`
+glyphs with masked multi-scale matching. Its timeout is a no-progress timeout:
+every successfully closed modal refreshes the budget.
+
+Detection experiments:
+
+```powershell
+.venv\Scripts\python.exe scripts\test_modal_features.py screenshots\1.png
+.venv\Scripts\python.exe scripts\test_modal_ocr.py screenshots\1.png --tesseract C:\path\to\tesseract.exe
+```
+
+The feature test compares ORB, SIFT, and AKAZE and writes annotated images plus
+JSON metrics. The OCR test compares original, grayscale, Otsu, and adaptive
+preprocessing through the Tesseract CLI.
+
+Friend-farm vision uses one persistent Windows Graphics Capture session per
+MuMu window. ADB is not used for screenshots; it remains responsible for
+Android taps, text/key input, and app/browser intents.
+Each instance's configured resolution is read from
+`configs/shell_config.json`. WGC frames are matched in the templates'
+960x540 reference space, then tap coordinates are scaled to that instance's
+resolution.
+
+Some MuMu installs expose the same commands through `MuMuNxMain.exe` instead:
+
+```powershell
+.venv\Scripts\python.exe scripts\launch_mumu_cookierun.py --manager "D:\Program Files\Netease\MuMuPlayer\nx_main\MuMuNxMain.exe"
+```
+
 ## The full bot
 
 ```powershell
@@ -39,7 +98,7 @@ result screen -> mystery boxes. Add `--loop` to repeat forever or
 
 | Mode | Gameplay driver | Needs |
 |------|-----------------|-------|
-| `levels` (default) | Replays one tap trace per level, continuously synchronized to the live progress marker. Recommended. | `recordings/levels/<episode>/*.json` from `scripts/record_levels.py` |
+| `levels` (default) | Replays one tap trace per level, continuously synchronized to the live progress marker. Recommended. | `recordings/episodes/<episode>/levels/level_NN/*.json` from `scripts/record_levels.py` |
 | `reactive` | No recordings: detects obstacle sprites in a lookahead window and jumps/slides in response (~25 ms loop). | obstacle templates in `assets/witch_oven/` |
 | `none` | Plays nothing during the run: watches the screen, taps the Activate Cookie Relay banner when it appears, and waits for the result screen. Useful to let a boosted run ride, or to play the run yourself while the bot handles menus, boosts, and results. | - |
 
@@ -65,14 +124,16 @@ the level and fires each moving-phase tap when that same progress is reached.
 This continuously corrects start-delay and speed differences instead of
 applying one timing offset at the level boundary. Taps made while the marker
 is stationary or unavailable use their recorded relative time as a fallback.
-Trace format is v5; older recordings are rejected with a message to re-record.
+Only the current nested v5 recording layout is supported; re-record older
+traces.
 
 ## Recording per-level traces
 
 The game is organized into episodes (e.g. Episode 1: Escape from the Oven),
 each made of several levels. The recorder samples WGC frames for progress and
-records your real mouse clicks inside the LDPlayer render window. Start it
-before the first level begins, then play manually.
+records Android touch events through ADB `getevent`, so traces use the device
+coordinates and touch durations actually delivered to Android. Start it before
+the first level begins, then play manually.
 
 Record one episode at a time:
 
@@ -80,8 +141,10 @@ Record one episode at a time:
 .venv\Scripts\python.exe -u scripts\record_levels.py --episode ep01
 ```
 
-Trace files live at `recordings/levels/<episode>/level_NN.json` as
-`{t, progress, x, y, duration}` steps.
+Trace files live at
+`recordings/episodes/<episode>/levels/level_NN/level_NN_nnn.json` as
+`{t, progress, x, y, duration}` steps. Multiple recordings for the same level
+can coexist; replay randomly picks one variant when that level starts.
 
 ## Project structure
 
@@ -115,7 +178,9 @@ avd_runner/            Reusable library (device I/O, vision, capture, gameplay d
 scripts/               Game-specific entry points
   auto_runner.py       The full farming bot (see modes above): orchestration,
                        menu policy, boost purchasing, mystery boxes
-  record_levels.py     Windows-native manual trace recorder for level taps
+  launch_mumu_cookierun.py
+                       Start MuMu Player instances and open Cookie Run on each
+  record_levels.py     Manual trace recorder: WGC progress + ADB touch events
   record_frames.py     Save a burst of gameplay frames (JPEG) for offline
                        analysis: --seconds, --fps, --name -> captures/<name>/
   extract_sprites.py   Slice sprites out of the game APK's TexturePacker
@@ -146,8 +211,8 @@ assets/                Menu-phase button templates (play, boosts, result OK,
 examples/              Minimal library usage samples (tap_center, template
                        matching)
 
-recordings/            (gitignored) per-level tap traces, one folder per
-                       episode: levels/<episode>/level_NN.json
+recordings/            (gitignored) per-level tap traces:
+                       episodes/<episode>/levels/level_NN/level_NN_nnn.json
 captures/              (gitignored) frame bursts and recording-session
                        screenshots (boundary/pause-menu shots)
 screenshots/           (gitignored) ad-hoc debug screenshots

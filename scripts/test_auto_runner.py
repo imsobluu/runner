@@ -115,11 +115,17 @@ finally:
 
 previous, instances = fake_runner_module("avd_runner.levels", "LevelReplayer")
 try:
-    episode_dir = Path("recordings/levels/ep01")
-    runner = auto_runner.build_gameplay_runner(ctx, "levels", None, episode_dir)
+    episode_dir = Path("recordings/episodes/ep01")
+    runner = auto_runner.build_gameplay_runner(
+        ctx,
+        "levels",
+        auto_runner.ACTIVATE_COOKIE_RELAY_TEMPLATE,
+        episode_dir,
+    )
     assert runner is instances[0]
     assert instances[0].args[2] == auto_runner.ASSETS
     assert instances[0].args[3] == episode_dir
+    assert instances[0].kwargs["relay_template"] == auto_runner.ACTIVATE_COOKIE_RELAY_TEMPLATE
 finally:
     if previous is None:
         del sys.modules["avd_runner.levels"]
@@ -142,6 +148,47 @@ try:
 finally:
     auto_runner.tap_play_with_double_coins_button = original_tap_play_with_double_coins_button
 
+# The optional relic claim runs before the initial Play tap.
+original_tap_play_button = auto_runner.tap_play_button
+original_claim_relic_if_alert = auto_runner.claim_relic_if_alert
+original_ensure_double_coins_setup = auto_runner.ensure_double_coins_setup
+original_buy_optional_boosts = auto_runner.buy_optional_boosts
+original_run_after_start = auto_runner.run_after_start
+original_clear_results = auto_runner.clear_results
+order = []
+try:
+    auto_runner.claim_relic_if_alert = lambda _ctx: order.append("relic") or False
+    auto_runner.tap_play_button = lambda _ctx: order.append("play") or True
+    auto_runner.ensure_double_coins_setup = lambda _ctx: order.append("double_coins")
+    auto_runner.buy_optional_boosts = lambda _ctx, _skip: order.append("boosts")
+    auto_runner.run_after_start = lambda _ctx, _mode, _no_relay, _episode: order.append("gameplay")
+    auto_runner.clear_results = lambda _ctx: order.append("clear")
+    auto_runner.run_once(ctx, auto_runner.parse_args(["--mode", "none"]))
+    assert order[:2] == ["relic", "play"]
+finally:
+    auto_runner.tap_play_button = original_tap_play_button
+    auto_runner.claim_relic_if_alert = original_claim_relic_if_alert
+    auto_runner.ensure_double_coins_setup = original_ensure_double_coins_setup
+    auto_runner.buy_optional_boosts = original_buy_optional_boosts
+    auto_runner.run_after_start = original_run_after_start
+    auto_runner.clear_results = original_clear_results
+
+# Relic claim sequence exits the relic page after confirming the claim.
+original_tap_target = auto_runner.tap_target
+sequence = []
+try:
+    auto_runner.tap_target = lambda _ctx, target, **_kwargs: sequence.append(target.name) or True
+    assert auto_runner.claim_relic_if_alert(ctx)
+    assert sequence == [
+        "Get Alert",
+        "Relic Gem",
+        "Claim Relic",
+        "Confirm Relic",
+        "Exit Relic Page",
+    ]
+finally:
+    auto_runner.tap_target = original_tap_target
+
 # parse_args is now testable without mutating sys.argv.
 args = auto_runner.parse_args(["--mode", "none", "--loop-count", "2"])
 assert args.mode == "none"
@@ -157,7 +204,9 @@ else:
 
 # Flow helpers should now be testable without directly raising SystemExit.
 original_tap_play_button = auto_runner.tap_play_button
+original_claim_relic_if_alert = auto_runner.claim_relic_if_alert
 try:
+    auto_runner.claim_relic_if_alert = lambda _ctx: False
     auto_runner.tap_play_button = lambda _ctx: False
     try:
         auto_runner.run_once(ctx, auto_runner.parse_args([]))
@@ -166,6 +215,7 @@ try:
     else:
         raise AssertionError("run_once should raise RunnerError when Play fails")
 finally:
+    auto_runner.claim_relic_if_alert = original_claim_relic_if_alert
     auto_runner.tap_play_button = original_tap_play_button
 
 print("ok")

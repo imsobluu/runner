@@ -45,8 +45,8 @@ Use these before committing refactor phases:
 .\.venv\Scripts\python.exe scripts\test_reactive.py
 ```
 
-Known note: `test_levels.py` may print that an existing `ep02` recording is v4
-and needs v5, then still exit `ok`; that is handled compatibility behavior.
+Known note: only the current nested v5 recording layout is supported. Older
+flat or pre-v5 recordings should be re-recorded.
 
 ## Phase 1: add seams and low-risk orchestration cleanup
 
@@ -195,8 +195,8 @@ and needs v5, then still exit `ok`; that is handled compatibility behavior.
   Windows/emulator-native input backend later.
 - Whether captured-frame fixtures should be committed to the repo or kept as
   local artifacts.
-- Whether trace v4 recordings should be migrated, deleted, or left as local
-  compatibility warnings.
+- Whether any local trace v4 recordings should simply be deleted after
+  re-recording.
 
 ## Recommended next PR-sized change
 

@@ -59,11 +59,16 @@ POWER_JELLY_BOOST_TEMPLATE = ASSETS / "power_jelly_boost.png"
 HP_EXTENSION_TEMPLATE = ASSETS / "hp_extension.png"
 BOOST_BUY_BUTTON_TEMPLATE = ASSETS / "boost_buy_button.png"
 ACTIVATE_COOKIE_RELAY_TEMPLATE = ASSETS / "activate_cookie_relay.png"
+GET_ALERT_TEMPLATE = ASSETS / "get_alert.png"
+RELIC_GEM_TEMPLATE = ASSETS / "relic_gem.png"
+CLAIM_RELIC_BUTTON_TEMPLATE = ASSETS / "claim_relic_button.png"
+CONFIRM_RELIC_BUTTON_TEMPLATE = ASSETS / "confirm_relic_button.png"
+EXIT_RELIC_PAGE_BUTTON_TEMPLATE = ASSETS / "exit_relic_page_button.png"
 RESULT_OK_BUTTON_TEMPLATE = ASSETS / "result_ok_button.png"
 OPEN_ALL_MYSTERY_BOX_BUTTON_TEMPLATE = ASSETS / "open_all_mystery_box_button.png"
 CONFIRM_MYSTERY_BOX_BUTTON_TEMPLATE = ASSETS / "confirm_mystery_box_button.png"
 LEVEL_UP_CONFIRM_BUTTON_TEMPLATE = ASSETS / "level_up_confirm_button.png"
-LEVEL_RECORDINGS_DIR = REPO_ROOT / "recordings" / "levels"
+LEVEL_RECORDINGS_DIR = REPO_ROOT / "recordings" / "episodes"
 
 PLAY_TARGET = TemplateTarget("Play", PLAY_BUTTON_TEMPLATE)
 PLAY_WITH_DOUBLE_COINS_TARGET = TemplateTarget(
@@ -76,11 +81,16 @@ MULTI_TARGET = TemplateTarget("Multi", MULTI_BUTTON_TEMPLATE)
 MULTI_BUY_TARGET = TemplateTarget("Multi Buy", MULTI_BUY_BUTTON_TEMPLATE)
 DOUBLE_COINS_TARGET = TemplateTarget("Double Coins", DOUBLE_COINS_TEMPLATE)
 FAST_START_0_TARGET = TemplateTarget("Fast Start 0", FAST_START_0_TEMPLATE, threshold=0.99, attempts=1)
-COOKIE_RELAY_0_TARGET = TemplateTarget("Cookie Relay 0", COOKIE_RELAY_0_TEMPLATE, threshold=0.99, attempts=1)
+COOKIE_RELAY_0_TARGET = TemplateTarget("Cookie Relay 0", COOKIE_RELAY_0_TEMPLATE, threshold=0.98, attempts=1)
 DOUBLE_XP_TARGET = TemplateTarget("Double XP", DOUBLE_XP_TEMPLATE, attempts=1)
 POWER_JELLY_BOOST_TARGET = TemplateTarget("Power Jelly Boost", POWER_JELLY_BOOST_TEMPLATE, attempts=1)
 HP_EXTENSION_TARGET = TemplateTarget("HP Extension", HP_EXTENSION_TEMPLATE, attempts=1)
 BOOST_BUY_TARGET = TemplateTarget("Boost Buy", BOOST_BUY_BUTTON_TEMPLATE)
+GET_ALERT_TARGET = TemplateTarget("Get Alert", GET_ALERT_TEMPLATE, attempts=1)
+RELIC_GEM_TARGET = TemplateTarget("Relic Gem", RELIC_GEM_TEMPLATE)
+CLAIM_RELIC_TARGET = TemplateTarget("Claim Relic", CLAIM_RELIC_BUTTON_TEMPLATE)
+CONFIRM_RELIC_TARGET = TemplateTarget("Confirm Relic", CONFIRM_RELIC_BUTTON_TEMPLATE, attempts=20)
+EXIT_RELIC_PAGE_TARGET = TemplateTarget("Exit Relic Page", EXIT_RELIC_PAGE_BUTTON_TEMPLATE)
 RESULT_OK_TARGET = TemplateTarget("Result OK", RESULT_OK_BUTTON_TEMPLATE, attempts=120)
 OPEN_ALL_MYSTERY_BOX_TARGET = TemplateTarget("Open All Mystery Box", OPEN_ALL_MYSTERY_BOX_BUTTON_TEMPLATE)
 CONFIRM_MYSTERY_BOX_TARGET = TemplateTarget("Confirm Mystery Box", CONFIRM_MYSTERY_BOX_BUTTON_TEMPLATE)
@@ -190,6 +200,20 @@ def tap_boost_buy_button(ctx: AutoRunnerContext) -> bool:
     return tap_target(ctx, BOOST_BUY_TARGET)
 
 
+def claim_relic_if_alert(ctx: AutoRunnerContext) -> bool:
+    if not tap_target(ctx, GET_ALERT_TARGET):
+        return False
+    if not tap_target(ctx, RELIC_GEM_TARGET):
+        raise RunnerError("Get alert was visible, but relic_gem.png could not be tapped.")
+    if not tap_target(ctx, CLAIM_RELIC_TARGET):
+        raise RunnerError("Relic gem was tapped, but claim_relic_button.png could not be tapped.")
+    if not tap_target(ctx, CONFIRM_RELIC_TARGET):
+        raise RunnerError("Claim relic was tapped, but confirm_relic_button.png could not be tapped.")
+    if not tap_target(ctx, EXIT_RELIC_PAGE_TARGET):
+        raise RunnerError("Relic was confirmed, but exit_relic_page_button.png could not be tapped.")
+    return True
+
+
 def tap_result_ok_button(ctx: AutoRunnerContext) -> bool:
     return tap_target(ctx, RESULT_OK_TARGET)
 
@@ -245,6 +269,7 @@ def build_gameplay_runner(
             ASSETS,
             episode_dir,
             exit_template=RESULT_OK_BUTTON_TEMPLATE,
+            relay_template=relay_template,
             on_tap=ctx.debug.save_tap if ctx.debug.enabled_for_tap_saves else None,
             debug_view=ctx.debug.view,
         )
@@ -305,13 +330,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--episode",
         help="Episode whose level recordings to replay (folder under "
-        "recordings/levels/). Defaults to the only recorded episode.",
+        "recordings/episodes/). Defaults to the only recorded episode.",
     )
     parser.add_argument(
         "--no-cookie-relay",
         action="store_true",
         help="Don't tap activate_cookie_relay.png when it appears mid-run "
-        "(reactive and none modes tap it by default).",
+        "(all gameplay modes tap it by default).",
     )
     parser.add_argument(
         "--no-captcha",
@@ -423,6 +448,7 @@ def clear_results(ctx: AutoRunnerContext) -> None:
 
 
 def run_once(ctx: AutoRunnerContext, args: argparse.Namespace) -> None:
+    claim_relic_if_alert(ctx)
     if not tap_play_button(ctx):
         raise RunnerError()
 
@@ -437,6 +463,13 @@ def main() -> None:
     device = AvdDevice.from_env()
     from avd_runner.capture import WindowCapture
 
+    if device.input_screen_size() != device.screen_size():
+        logical_width, logical_height = device.screen_size()
+        input_width, input_height = device.input_screen_size()
+        print(
+            f"Scaling input coordinates {logical_width}x{logical_height} -> "
+            f"{input_width}x{input_height}"
+        )
     capture = WindowCapture(device_size=device.screen_size())
     debug_root = None
     if args.debug:

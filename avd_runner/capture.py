@@ -34,6 +34,7 @@ _dwmapi = ctypes.windll.dwmapi
 _EnumProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
 RENDER_WINDOW_CLASS = "RenderWindow"  # LDPlayer's game surface child window
+RENDER_WINDOW_CLASSES = {RENDER_WINDOW_CLASS, "nemuwin"}  # MuMu: nemuwin
 DWMWA_EXTENDED_FRAME_BOUNDS = 9
 GA_ROOT = 2
 SW_RESTORE = 9
@@ -53,7 +54,7 @@ def find_render_window(title_substring: str = "LDPlayer") -> int:
     def on_child(child: int, _lparam: int) -> bool:
         buf = ctypes.create_unicode_buffer(256)
         _user32.GetClassNameW(child, buf, 256)
-        if buf.value == RENDER_WINDOW_CLASS:
+        if buf.value in RENDER_WINDOW_CLASSES:
             found.append(child)
             return False
         return True
@@ -72,6 +73,22 @@ def find_render_window(title_substring: str = "LDPlayer") -> int:
     if not found:
         raise CaptureError(f"No visible window with {title_substring!r} in its title")
     return found[0]
+
+
+def find_render_window_in(root_hwnd: int) -> int:
+    """Find the emulator render child under an explicit top-level window."""
+    found: list[int] = []
+
+    def on_child(child: int, _lparam: int) -> bool:
+        buf = ctypes.create_unicode_buffer(256)
+        _user32.GetClassNameW(child, buf, 256)
+        if buf.value in RENDER_WINDOW_CLASSES:
+            found.append(child)
+            return False
+        return True
+
+    _user32.EnumChildWindows(root_hwnd, _EnumProc(on_child), 0)
+    return found[0] if found else root_hwnd
 
 
 def _window_rect(hwnd: int) -> tuple[int, int, int, int]:
@@ -103,9 +120,14 @@ class WindowCapture:
         title_substring: str = "LDPlayer",
         device_size: tuple[int, int] | None = None,
         first_frame_timeout: float = 5.0,
+        window_hwnd: int | None = None,
     ):
-        self._render_hwnd = find_render_window(title_substring)
-        self._root_hwnd = _user32.GetAncestor(self._render_hwnd, GA_ROOT)
+        if window_hwnd is None:
+            self._render_hwnd = find_render_window(title_substring)
+            self._root_hwnd = _user32.GetAncestor(self._render_hwnd, GA_ROOT)
+        else:
+            self._root_hwnd = window_hwnd
+            self._render_hwnd = find_render_window_in(window_hwnd)
         if _user32.IsIconic(self._root_hwnd):
             _user32.ShowWindow(self._root_hwnd, SW_RESTORE)  # WGC needs it unminimized
         self._device_size = device_size

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import random
+import re
 import shlex
 import subprocess
 import time
@@ -26,6 +27,15 @@ DEFAULT_DEVICE_SIZE = (1280, 720)
 _TAP_JITTER_SIGMA = 3.0
 _TAP_DRIFT_PX = 3
 _TAP_DWELL_MS = (55, 130)
+
+
+def parse_wm_size(output: str) -> tuple[int, int] | None:
+    """Return the active Android display size reported by ``wm size``."""
+    sizes = re.findall(r"(\d+)x(\d+)", output)
+    if not sizes:
+        return None
+    width, height = sizes[-1]  # An override, when present, is listed last.
+    return int(width), int(height)
 
 
 def humanized_tap_path(x: int, y: int) -> tuple[int, int, int, int, int]:
@@ -93,16 +103,36 @@ class AvdDevice:
     adb_path: str = "adb"
     device_size: tuple[int, int] = DEFAULT_DEVICE_SIZE
     on_gesture: Callable[[int, int, int, int, int, str], None] | None = None
+    input_size: tuple[int, int] | None = None
 
     @classmethod
     def from_env(cls) -> "AvdDevice":
-        return cls(
+        device = cls(
             serial=os.environ.get("ANDROID_SERIAL"),
             adb_path=os.environ.get("ADB_PATH", "adb"),
         )
+        detected = parse_wm_size(device.adb("shell", "wm", "size"))
+        if detected is not None:
+            device.input_size = detected
+        return device
 
     def screen_size(self) -> tuple[int, int]:
+        """Coordinate size used by capture, vision, and gesture callers."""
         return self.device_size
+
+    def input_screen_size(self) -> tuple[int, int]:
+        """Actual coordinate size accepted by Android input injection."""
+        return self.input_size or self.device_size
+
+    def _input_point(self, x: int, y: int) -> tuple[int, int]:
+        input_width, input_height = self.input_screen_size()
+        logical_width, logical_height = self.device_size
+        scaled_x = round(x * input_width / logical_width)
+        scaled_y = round(y * input_height / logical_height)
+        return (
+            min(input_width - 1, max(0, scaled_x)),
+            min(input_height - 1, max(0, scaled_y)),
+        )
 
     def tap(self, x: int, y: int, label: str = "") -> tuple[int, int]:
         x1, y1, x2, y2, dwell = humanized_tap_path(x, y)
@@ -121,12 +151,14 @@ class AvdDevice:
         duration_ms: int = 300,
         label: str = "",
     ) -> None:
+        input_x1, input_y1 = self._input_point(x1, y1)
+        input_x2, input_y2 = self._input_point(x2, y2)
         self.input(
             "swipe",
-            str(x1),
-            str(y1),
-            str(x2),
-            str(y2),
+            str(input_x1),
+            str(input_y1),
+            str(input_x2),
+            str(input_y2),
             str(duration_ms),
         )
         self._emit_gesture(x1, y1, x2, y2, duration_ms, label)
@@ -140,6 +172,12 @@ class AvdDevice:
 
     def input(self, *args: str) -> str:
         return self._adb("shell", "input", *args, text=True)
+
+    def adb(self, *args: str, text: bool = True) -> str | bytes:
+        return self._adb(*args, text=text)
+
+    def command(self, *args: str) -> list[str]:
+        return self._command(*args)
 
     def open_input_shell(self) -> subprocess.Popen:
         return subprocess.Popen(
@@ -165,8 +203,13 @@ class AvdDevice:
         label: str = "",
     ) -> None:
         assert shell.stdin is not None
+        input_x1, input_y1 = self._input_point(x1, y1)
+        input_x2, input_y2 = self._input_point(x2, y2)
         suffix = " &" if background else ""
-        shell.stdin.write(f"input swipe {x1} {y1} {x2} {y2} {duration_ms}{suffix}\n")
+        shell.stdin.write(
+            f"input swipe {input_x1} {input_y1} {input_x2} {input_y2} "
+            f"{duration_ms}{suffix}\n"
+        )
         shell.stdin.flush()
         self._emit_gesture(x1, y1, x2, y2, duration_ms, label)
 

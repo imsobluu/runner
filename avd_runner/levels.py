@@ -13,6 +13,7 @@ import random
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 import cv2
 import numpy as np
@@ -36,15 +37,115 @@ STRIP_Y1, STRIP_Y2, STRIP_X1, STRIP_X2 = 100, 140, 120, 355
 PROGRESS_START_X, PROGRESS_END_X = 139, 325
 MARKER_THRESHOLD = 0.7
 MARKER_MASK_MIN = 8
+MARKER_EDGE_THRESHOLD = 0.55
 
 # The marker can be unreadable for seconds around a level transition and
 # reappear a few percent in (up to ~7% observed).
 LEVEL_START_MAX = 0.3
 LEVEL_END_MIN = 0.85
+LEVEL_END_LOW_FRAMES = 8
+MIN_LEVEL_SECONDS = 15.0
 # The marker RESTS at ~0% during the level intro before it starts walking;
 # positions below this carry no useful progress-clock timing signal.
 MOVING_MIN = 0.02
 _MARKER_MASK_CACHE: dict[int, np.ndarray] = {}
+_MARKER_EDGE_CACHE: dict[int, np.ndarray] = {}
+
+
+class MarkerDetection(NamedTuple):
+    progress: float
+    box: tuple[int, int, int, int]
+    score: float
+    method: str
+
+
+class TrackedProgress(NamedTuple):
+    progress: float | None
+    source: str
+    reason: str
+    rate: float | None
+
+
+MAX_PREDICTION_SECONDS = 2.0
+MAX_FORWARD_RATE = 0.08
+MAX_BACKWARD_STEP = 0.03
+RATE_ALPHA = 0.15
+INITIAL_PROGRESS_RATE = 0.018
+WRAP_HIGH = 0.85
+WRAP_LOW = 0.15
+
+
+class ProgressTracker:
+    """Temporal filter for raw progress detections.
+
+    Accepts smooth progress and real wraps, predicts through short missing
+    spans, and rejects implausible one-frame jumps.
+    """
+
+    def __init__(self):
+        self._last_progress: float | None = None
+        self._last_time: float | None = None
+        self._rate: float | None = None
+
+    def update(self, now: float, raw_progress: float | None) -> TrackedProgress:
+        predicted = self._predict(now)
+        if raw_progress is None:
+            if predicted is None:
+                return TrackedProgress(None, "unknown", "missing_no_prediction", self._rate)
+            self._last_progress = predicted
+            self._last_time = now
+            return TrackedProgress(predicted, "predicted", "missing", self._rate)
+
+        if self._last_progress is None or self._last_time is None:
+            self._accept(now, raw_progress)
+            return TrackedProgress(raw_progress, "raw", "first", self._rate)
+
+        dt = max(1e-6, now - self._last_time)
+        delta = raw_progress - self._last_progress
+        if self._last_progress >= WRAP_HIGH and raw_progress <= WRAP_LOW:
+            self._accept(now, raw_progress, reset_rate=True)
+            return TrackedProgress(raw_progress, "raw", "accepted_wrap", self._rate)
+        if delta < -MAX_BACKWARD_STEP:
+            if predicted is None:
+                return TrackedProgress(None, "unknown", "rejected_backward_no_prediction", self._rate)
+            self._last_progress = predicted
+            self._last_time = now
+            return TrackedProgress(predicted, "predicted", "rejected_backward", self._rate)
+
+        rate = delta / dt
+        if rate > MAX_FORWARD_RATE:
+            if predicted is None:
+                return TrackedProgress(None, "unknown", "rejected_too_fast_no_prediction", self._rate)
+            self._last_progress = predicted
+            self._last_time = now
+            return TrackedProgress(predicted, "predicted", "rejected_too_fast", self._rate)
+
+        self._accept(now, raw_progress)
+        return TrackedProgress(raw_progress, "raw", "accepted", self._rate)
+
+    def _accept(self, now: float, progress: float, *, reset_rate: bool = False) -> None:
+        if reset_rate:
+            self._rate = INITIAL_PROGRESS_RATE
+        elif self._last_progress is not None and self._last_time is not None:
+            dt = max(1e-6, now - self._last_time)
+            measured = max(0.0, min(MAX_FORWARD_RATE, (progress - self._last_progress) / dt))
+            if self._rate is None:
+                self._rate = measured
+            else:
+                self._rate = (1.0 - RATE_ALPHA) * self._rate + RATE_ALPHA * measured
+        elif self._rate is None:
+            self._rate = INITIAL_PROGRESS_RATE
+        self._last_progress = progress
+        self._last_time = now
+
+    def _predict(self, now: float) -> float | None:
+        if self._last_progress is None or self._last_time is None:
+            return None
+        dt = now - self._last_time
+        if dt < 0 or dt > MAX_PREDICTION_SECONDS:
+            return None
+        rate = self._rate if self._rate is not None else INITIAL_PROGRESS_RATE
+        return max(0.0, min(1.05, self._last_progress + rate * dt))
 
 
 def load_marker(assets_dir: Path) -> np.ndarray:
@@ -62,18 +163,41 @@ def continue_template(assets_dir: Path) -> Path:
 
 
 def marker_mask(marker: np.ndarray) -> np.ndarray:
-    """Foreground mask for the cookie marker; excludes background pixels."""
+    """Shape mask for the cookie marker; excludes most mutable background pixels."""
     key = id(marker)
     mask = _MARKER_MASK_CACHE.get(key)
     if mask is None:
-        mask = np.where(np.any(marker > MARKER_MASK_MIN, axis=2), 255, 0).astype("uint8")
+        gray = cv2.cvtColor(marker, cv2.COLOR_BGR2GRAY)
+        edges = cv2.Canny(gray, 40, 120)
+        mask = cv2.dilate(edges, np.ones((3, 3), dtype=np.uint8), iterations=1)
+        if np.count_nonzero(mask) < 20:
+            mask = np.where(np.any(marker > MARKER_MASK_MIN, axis=2), 255, 0).astype("uint8")
         _MARKER_MASK_CACHE[key] = mask
     return mask
+
+
+def marker_edges(marker: np.ndarray) -> np.ndarray:
+    key = id(marker)
+    edges = _MARKER_EDGE_CACHE.get(key)
+    if edges is None:
+        gray = cv2.cvtColor(marker, cv2.COLOR_BGR2GRAY)
+        edges = cv2.Canny(gray, 40, 120)
+        _MARKER_EDGE_CACHE[key] = edges
+    return edges
 
 
 def locate_marker(
     frame: np.ndarray, marker: np.ndarray
 ) -> tuple[float, tuple[int, int, int, int]] | None:
+    detected = locate_marker_with_details(frame, marker)
+    if detected is None:
+        return None
+    return detected.progress, detected.box
+
+
+def locate_marker_with_details(
+    frame: np.ndarray, marker: np.ndarray
+) -> MarkerDetection | None:
     """(progress in [0..1], marker box in device px), or None when off screen.
 
     Subpixel: a parabola through the match scores around the peak recovers
@@ -84,8 +208,19 @@ def locate_marker(
     result = np.nan_to_num(result, nan=-1.0, posinf=-1.0, neginf=-1.0)
     _, score, _, loc = cv2.minMaxLoc(result)
     if score < MARKER_THRESHOLD:
-        return None
-    x, y = loc
+        strip_edges = cv2.Canny(cv2.cvtColor(strip, cv2.COLOR_BGR2GRAY), 40, 120)
+        edge_result = cv2.matchTemplate(strip_edges, marker_edges(marker), cv2.TM_CCORR_NORMED)
+        edge_result = np.nan_to_num(edge_result, nan=0.0, posinf=0.0, neginf=0.0)
+        _, edge_score, _, edge_loc = cv2.minMaxLoc(edge_result)
+        if edge_score < MARKER_EDGE_THRESHOLD:
+            return None
+        result = edge_result
+        x, y = edge_loc
+        score = edge_score
+        method = "edge"
+    else:
+        x, y = loc
+        method = "color"
     dx = 0.0
     if 0 < x < result.shape[1] - 1:
         r = result[y, x - 1 : x + 2].astype(np.float64)
@@ -96,7 +231,7 @@ def locate_marker(
     center = STRIP_X1 + x + dx + mw / 2
     progress = (center - PROGRESS_START_X) / (PROGRESS_END_X - PROGRESS_START_X)
     box = (STRIP_X1 + x, STRIP_Y1 + y, STRIP_X1 + x + mw, STRIP_Y1 + y + mh)
-    return progress, box
+    return MarkerDetection(progress=progress, box=box, score=float(score), method=method)
 
 
 def read_progress(frame: np.ndarray, marker: np.ndarray) -> float | None:
@@ -105,10 +240,12 @@ def read_progress(frame: np.ndarray, marker: np.ndarray) -> float | None:
     return located[0] if located is not None else None
 
 
-def load_levels(levels_dir: Path) -> dict[int, dict]:
-    """Map of level number to its progress-keyed tap trace."""
-    levels = {}
-    for path in sorted(Path(levels_dir).glob("level_*.json")):
+def load_levels(levels_dir: Path) -> dict[int, list[dict]]:
+    """Map of level number to one or more progress-keyed tap trace variants."""
+    levels: dict[int, list[dict]] = {}
+    root = Path(levels_dir)
+    paths = sorted(root.glob("levels/level_*/level_*.json"))
+    for path in paths:
         data = json.loads(path.read_text(encoding="utf-8"))
         if data.get("version") != TRACE_VERSION:
             raise ValueError(
@@ -119,7 +256,7 @@ def load_levels(levels_dir: Path) -> dict[int, dict]:
         for tap in taps:
             if "progress" not in tap:
                 raise ValueError(f"{path} has a tap without recorded progress")
-        levels[data["level"]] = {"taps": taps}
+        levels.setdefault(data["level"], []).append({"taps": taps, "path": path})
     return levels
 
 
@@ -135,6 +272,8 @@ def tap_is_due(tap: dict, progress: float | None, elapsed: float) -> bool:
 class ReplayState:
     level: int
     in_level: bool = False
+    replay_enabled: bool = True
+    relay_handled: bool = False
     max_progress: float = 0.0
     stable_low: int = 0
     frame_count: int = 0
@@ -153,6 +292,7 @@ class LevelReplayer:
         assets_dir: Path,
         levels_dir: Path,
         exit_template: Path,
+        relay_template: Path | None = None,
         on_tap=None,  # on_tap(name, frame, x, y): debug hook for handshake taps
         debug_view=None,  # DebugView; draws marker box and taps live
     ):
@@ -161,12 +301,22 @@ class LevelReplayer:
         self._marker = load_marker(assets_dir)
         self._levels = load_levels(levels_dir)
         self._exit_template = exit_template
+        self._relay_template = relay_template
         self._on_tap = on_tap
         self._debug_view = debug_view
         if not self._levels:
             raise ValueError(f"No level recordings in {levels_dir}")
 
-    def _tap(self, shell, x: int, y: int, duration: float) -> None:
+    def _tap(
+        self,
+        shell,
+        x: int,
+        y: int,
+        duration: float,
+        *,
+        background: bool = True,
+        label: str | None = None,
+    ) -> None:
         # Jitter position, duration, and add a few px of down->up drift;
         # identical zero-travel replays run after run look robotic.
         x += random.randint(-8, 8)
@@ -174,24 +324,36 @@ class LevelReplayer:
         x2 = x + random.randint(-3, 3)
         y2 = y + random.randint(-3, 3)
         ms = max(30, round(duration * 1000 * random.uniform(0.95, 1.05)))
-        shell.swipe(x, y, x2, y2, ms, background=True, label="jump" if x < 640 else "slide")
+        shell.swipe(
+            x,
+            y,
+            x2,
+            y2,
+            ms,
+            background=background,
+            label=label or ("jump" if x < 640 else "slide"),
+        )
 
     def _start_level(self, state: ReplayState) -> None:
-        state.recorded = self._levels.get(state.level)
+        variants = self._levels.get(state.level)
+        state.recorded = random.choice(variants) if state.replay_enabled and variants else None
         state.level_t0 = time.perf_counter()
         state.tap_index = 0
-        if state.recorded is None:
+        if not state.replay_enabled:
+            print(f"Level {state.level}: recorded replay disabled; watching only.")
+        elif state.recorded is None:
             print(f"No recording for level {state.level}; watching only.")
         else:
             print(
                 f"Level {state.level}: progress-driven replay of "
-                f"{len(state.recorded['taps'])} taps."
+                f"{len(state.recorded['taps'])} taps from {state.recorded['path'].name}."
             )
         state.in_level = True
         state.max_progress = 0.0
+        state.stable_low = 0
 
     def _play_due_taps(self, state: ReplayState, shell, progress: float | None, now: float) -> None:
-        if state.recorded is None:
+        if not state.replay_enabled or state.recorded is None:
             return
         taps = state.recorded["taps"]
         while state.tap_index < len(taps):
@@ -201,6 +363,28 @@ class LevelReplayer:
                 break
             self._tap(shell, tap["x"], tap["y"], tap["duration"])
             state.tap_index += 1
+
+    def _check_exit_or_relay(self, frame, state: ReplayState, shell) -> bool:
+        if find_template(frame, self._exit_template, threshold=0.85):
+            print("Result screen detected; replay finished.")
+            return True
+
+        if not state.relay_handled and self._relay_template is not None:
+            match = find_template(frame, self._relay_template, threshold=0.85)
+            if match:
+                self._tap(
+                    shell,
+                    match.center_x,
+                    match.center_y,
+                    0.08,
+                    background=False,
+                    label="relay",
+                )
+                state.relay_handled = True
+                state.replay_enabled = False
+                state.recorded = None
+                print("Tapped Activate Cookie Relay; recorded replay disabled.")
+        return False
 
     def _frame_progress(self, frame) -> tuple[float | None, tuple[int, int, int, int] | None]:
         located = locate_marker(frame, self._marker)
@@ -232,8 +416,7 @@ class LevelReplayer:
                 state.frame_count += 1
                 time.sleep(0.02)
 
-                if state.frame_count % 30 == 0 and find_template(frame, self._exit_template, threshold=0.85):
-                    print("Result screen detected; replay finished.")
+                if state.frame_count % 15 == 0 and self._check_exit_or_relay(frame, state, shell):
                     return True
 
                 progress, marker_box = self._frame_progress(frame)
@@ -250,11 +433,21 @@ class LevelReplayer:
                         self._start_level(state)
                     continue
 
-                if state.max_progress > LEVEL_END_MIN and progress < LEVEL_START_MAX:
+                elapsed = time.perf_counter() - state.level_t0
+                if (
+                    state.max_progress > LEVEL_END_MIN
+                    and elapsed >= MIN_LEVEL_SECONDS
+                    and progress < LEVEL_START_MAX
+                ):
+                    state.stable_low += 1
+                    if state.stable_low < LEVEL_END_LOW_FRAMES:
+                        continue
                     print(f"Level {state.level} finished.")
                     state.level += 1
                     self._start_level(state)
                     continue
+                if progress >= LEVEL_START_MAX:
+                    state.stable_low = 0
 
                 state.max_progress = max(state.max_progress, progress)
 

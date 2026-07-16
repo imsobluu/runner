@@ -96,13 +96,29 @@ assert state.cooldown_until == 1.0 + reactive.ACTION_COOLDOWN
 helper._handle_obstacle(state, shell, obstacle, 0.91, now=1.1)
 assert len(shell.swipes) == 1
 
+original_sleep = reactive.time.sleep
+try:
+    reactive.time.sleep = lambda _seconds: None
+    state = reactive.ReactiveState()
+    shell = FakeShell()
+    obstacle = reactive.Obstacle("fake_jp2A", "jump", np.zeros((4, 4, 3), dtype=np.uint8))
+    helper._handle_obstacle(state, shell, obstacle, 0.91, now=2.0)
+    assert shell.swipes == [
+        (*reactive.JUMP_XY, reactive.HOLD_MS["jump"], "jump"),
+        (*reactive.JUMP_XY, reactive.HOLD_MS["jump"], "double_jump"),
+    ]
+finally:
+    reactive.time.sleep = original_sleep
+
+obstacle = reactive.Obstacle("fake", "slide", np.zeros((4, 4, 3), dtype=np.uint8))
 helper._update_debug_view("frame", obstacle, 0.91, (1, 2, 3, 4))
 assert helper._debug_view.updates == [
     (
         "frame",
         [
             (reactive.LOOK_X1, reactive.LOOK_Y1, reactive.LOOK_X2, reactive.LOOK_Y2, "lookahead", (0, 255, 0)),
-            (1, 2, 3, 4, "fake 0.91", (0, 0, 255)),
+            (reactive.ACTION_TRIGGER_X - 2, reactive.LOOK_Y1, reactive.ACTION_TRIGGER_X + 2, reactive.LOOK_Y2, "trigger", (255, 255, 0)),
+            (1, 2, 3, 4, "fake 0.91 s=1.00", (0, 0, 255)),
         ],
     )
 ]
