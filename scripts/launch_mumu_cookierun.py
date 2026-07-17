@@ -17,14 +17,19 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+from avd_runner import AvdDevice
 from avd_runner.capture import WindowCapture, find_render_window_in
+from avd_runner.levels import LevelReplayer
 from avd_runner.vision import TemplateMatch, find_template, find_template_multiscale
 
 
 DEFAULT_PACKAGE = "com.devsisters.crg"
 VISION_REFERENCE_SIZE = (960, 540)
 FRIEND_FARM_URL = "https://cookierunglobal.onelink.me/Xr0A/ohypcxa4"
-FRIEND_FARM_ASSETS = REPO_ROOT / "assets" / "friend-farm"
+ASSETS = REPO_ROOT / "assets"
+FRIEND_FARM_ASSETS = ASSETS / "friend-farm"
+FRIEND_FARM_RECORDINGS_DIR = REPO_ROOT / "recordings" / "friend_farm"
+RESULT_OK_BUTTON_TEMPLATE = ASSETS / "result_ok_button.png"
 FRIEND_FARM_INITIAL_SEQUENCE = [
     FRIEND_FARM_ASSETS / name
     for name in (
@@ -884,6 +889,66 @@ def launch_chrome_url(
     return False
 
 
+def run_friend_farm_levels(
+    adb_path: str,
+    serial: str,
+    capture: WindowCapture | None,
+    device_size: tuple[int, int],
+    timeout_seconds: float,
+    *,
+    dry_run: bool,
+) -> bool:
+    if dry_run:
+        if not tap_template_on_device(
+            adb_path,
+            serial,
+            capture,
+            device_size,
+            FRIEND_FARM_PLAY_3_TEMPLATE,
+            timeout_seconds,
+            dry_run=True,
+        ):
+            return False
+        print(f"{serial}: run level replay with {FRIEND_FARM_RECORDINGS_DIR}")
+        return True
+    if capture is None:
+        print(f"{serial}: WGC capture is unavailable.")
+        return False
+
+    try:
+        runner = LevelReplayer(
+            AvdDevice(
+                serial=serial,
+                adb_path=adb_path,
+                device_size=device_size,
+            ),
+            capture,
+            ASSETS,
+            FRIEND_FARM_RECORDINGS_DIR,
+            exit_template=RESULT_OK_BUTTON_TEMPLATE,
+        )
+    except Exception as exc:
+        print(f"{serial}: could not prepare level replay: {exc}")
+        return False
+
+    if not tap_template_on_device(
+        adb_path,
+        serial,
+        capture,
+        device_size,
+        FRIEND_FARM_PLAY_3_TEMPLATE,
+        timeout_seconds,
+        dry_run=False,
+    ):
+        return False
+
+    try:
+        return runner.run()
+    except Exception as exc:
+        print(f"{serial}: level replay failed: {exc}")
+        return False
+
+
 def run_friend_farm_sequence(
     adb_path: str,
     serial: str,
@@ -950,12 +1015,11 @@ def run_friend_farm_sequence(
             dry_run=dry_run,
         ):
             return False
-    return tap_template_on_device(
+    return run_friend_farm_levels(
         adb_path,
         serial,
         capture,
         device_size,
-        FRIEND_FARM_PLAY_3_TEMPLATE,
         timeout_seconds,
         dry_run=dry_run,
     )
