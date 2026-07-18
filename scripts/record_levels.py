@@ -23,7 +23,12 @@ from avd_runner.levels import (
     locate_marker_with_details,
     load_marker,
 )
-from avd_runner.recording import _parse_getevent_line, find_touch_event_device
+from avd_runner.recording import (
+    _parse_getevent_line,
+    find_touch_event_device,
+    scale_touch_axis,
+    touch_axis_ranges,
+)
 
 PROGRESS_SAMPLE_MAX_GAP = 0.25
 PROGRESS_ESTIMATE_MAX_GAP = 1.5
@@ -80,6 +85,11 @@ def watch_taps(
         print(f"Using touch input: {event_device}")
     else:
         print("Using all getevent devices; no dedicated touch device was detected.")
+    axis_ranges = (
+        touch_axis_ranges(device, event_device)
+        if event_device is not None
+        else {}
+    )
 
     process = subprocess.Popen(
         command,
@@ -114,9 +124,17 @@ def watch_taps(
 
         name, value = event
         if name == "ABS_MT_POSITION_X":
-            latest_x = max(0, min(width - 1, value))
+            latest_x = scale_touch_axis(
+                value,
+                width,
+                axis_ranges.get("ABS_MT_POSITION_X"),
+            )
         elif name == "ABS_MT_POSITION_Y":
-            latest_y = max(0, min(height - 1, value))
+            latest_y = scale_touch_axis(
+                value,
+                height,
+                axis_ranges.get("ABS_MT_POSITION_Y"),
+            )
         elif name in ("BTN_TOUCH", "ABS_MT_TRACKING_ID"):
             pressed = (name == "BTN_TOUCH" and value != 0) or (
                 name == "ABS_MT_TRACKING_ID" and value != -1

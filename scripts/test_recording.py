@@ -3,7 +3,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from avd_runner.recording import _parse_getevent_line, find_touch_event_device
+from avd_runner.recording import (
+    _parse_getevent_line,
+    find_touch_event_device,
+    scale_touch_axis,
+    touch_axis_ranges,
+)
 
 
 assert _parse_getevent_line(
@@ -32,5 +37,33 @@ add device 2: /dev/input/event4
 
 
 assert find_touch_event_device(FakeDevice()) == "/dev/input/event4"
+
+
+class FakeAxisDevice:
+    def adb(self, *args):
+        assert args == (
+            "shell",
+            "getevent",
+            "-lp",
+            "/dev/input/event4",
+        )
+        return """
+    ABS_MT_POSITION_X : value 0, min 0, max 1279, fuzz 0
+    ABS_MT_POSITION_Y : value 0, min 100, max 32867, fuzz 0
+"""
+
+
+ranges = touch_axis_ranges(FakeAxisDevice(), "/dev/input/event4")
+assert ranges == {
+    "ABS_MT_POSITION_X": (0, 1279),
+    "ABS_MT_POSITION_Y": (100, 32867),
+}
+assert scale_touch_axis(640, 1280, ranges["ABS_MT_POSITION_X"]) == 640
+assert scale_touch_axis(100, 720, ranges["ABS_MT_POSITION_Y"]) == 0
+assert scale_touch_axis(32867, 720, ranges["ABS_MT_POSITION_Y"]) == 719
+assert scale_touch_axis(16484, 720, ranges["ABS_MT_POSITION_Y"]) == 360
+assert scale_touch_axis(500, 720, None) == 500
+assert scale_touch_axis(900, 720, None) == 719
+assert scale_touch_axis(500, 720, (4, 4)) == 500
 
 print("ok")

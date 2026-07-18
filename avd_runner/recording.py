@@ -29,6 +29,37 @@ def find_touch_event_device(device: AvdDevice) -> str | None:
     return _touch_device_from_block(current_device, current_block)
 
 
+def touch_axis_ranges(
+    device: AvdDevice,
+    event_device: str,
+) -> dict[str, tuple[int, int]]:
+    output = device.adb("shell", "getevent", "-lp", event_device)
+    ranges: dict[str, tuple[int, int]] = {}
+    for line in output.splitlines():
+        match = re.search(
+            r"\b(ABS_MT_POSITION_[XY])\b.*?"
+            r"\bmin\s+(-?\d+),\s+max\s+(-?\d+)",
+            line,
+        )
+        if match:
+            ranges[match.group(1)] = (int(match.group(2)), int(match.group(3)))
+    return ranges
+
+
+def scale_touch_axis(
+    value: int,
+    logical_size: int,
+    axis_range: tuple[int, int] | None,
+) -> int:
+    if axis_range is not None:
+        minimum, maximum = axis_range
+        if maximum > minimum:
+            value = round(
+                (value - minimum) * (logical_size - 1) / (maximum - minimum)
+            )
+    return max(0, min(logical_size - 1, value))
+
+
 def _touch_device_from_block(device_path: str | None, block: list[str]) -> str | None:
     if not device_path:
         return None
