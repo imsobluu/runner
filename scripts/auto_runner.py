@@ -59,6 +59,7 @@ POWER_JELLY_BOOST_TEMPLATE = ASSETS / "power_jelly_boost.png"
 HP_EXTENSION_TEMPLATE = ASSETS / "hp_extension.png"
 BOOST_BUY_BUTTON_TEMPLATE = ASSETS / "boost_buy_button.png"
 ACTIVATE_COOKIE_RELAY_TEMPLATE = ASSETS / "activate_cookie_relay.png"
+ACTIVATE_FAST_START_TEMPLATE = ASSETS / "activate_fast_start.png"
 GET_ALERT_TEMPLATE = ASSETS / "get_alert.png"
 RELIC_GEM_TEMPLATE = ASSETS / "relic_gem.png"
 CLAIM_RELIC_BUTTON_TEMPLATE = ASSETS / "claim_relic_button.png"
@@ -266,6 +267,7 @@ def build_gameplay_runner(
     ctx: AutoRunnerContext,
     mode: str,
     relay_template: Path | None,
+    fast_start_template: Path | None,
     episode_dir: Path | None,
 ):
     if mode == "levels":
@@ -280,6 +282,7 @@ def build_gameplay_runner(
             episode_dir,
             exit_template=RESULT_OK_BUTTON_TEMPLATE,
             relay_template=relay_template,
+            fast_start_template=fast_start_template,
             on_tap=ctx.debug.save_tap if ctx.debug.enabled_for_tap_saves else None,
             debug_view=ctx.debug.view,
         )
@@ -292,6 +295,7 @@ def build_gameplay_runner(
             ASSETS / "witch_oven",
             exit_template=RESULT_OK_BUTTON_TEMPLATE,
             relay_template=relay_template,
+            fast_start_template=fast_start_template,
             debug_view=ctx.debug.view,
         )
     if mode == "none":
@@ -302,6 +306,7 @@ def build_gameplay_runner(
             ctx.capture,
             exit_template=RESULT_OK_BUTTON_TEMPLATE,
             relay_template=relay_template,
+            fast_start_template=fast_start_template,
             debug_view=ctx.debug.view,
         )
     raise RunnerError(f"Unknown gameplay mode: {mode}")
@@ -311,18 +316,26 @@ def run_after_start(
     ctx: AutoRunnerContext,
     mode: str,
     no_cookie_relay: bool,
+    fast_start: bool,
     episode: str | None,
 ) -> None:
     # Resolve before tapping Play so a missing episode fails without
     # starting (and wasting) a run.
     episode_dir = resolve_episode_dir(episode) if mode == "levels" else None
     relay_template = None if no_cookie_relay else ACTIVATE_COOKIE_RELAY_TEMPLATE
+    fast_start_template = ACTIVATE_FAST_START_TEMPLATE if fast_start else None
 
     # The gameplay drivers take over after the boost screen's final Play button.
     if not tap_play_with_double_coins_button(ctx):
         raise RunnerError()
 
-    runner = build_gameplay_runner(ctx, mode, relay_template, episode_dir)
+    runner = build_gameplay_runner(
+        ctx,
+        mode,
+        relay_template,
+        fast_start_template,
+        episode_dir,
+    )
     if not runner.run():
         raise RunnerError()
 
@@ -347,6 +360,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Don't tap activate_cookie_relay.png when it appears mid-run "
         "(all gameplay modes tap it by default).",
+    )
+    parser.add_argument(
+        "--fast-start",
+        action="store_true",
+        help="Tap Activate Fast Start when it appears during gameplay.",
     )
     parser.add_argument(
         "--no-captcha",
@@ -470,7 +488,13 @@ def run_once(ctx: AutoRunnerContext, args: argparse.Namespace) -> None:
     if not args.skip_random_boost:
         ensure_double_coins_setup(ctx)
     buy_optional_boosts(ctx, args.skip_top_row_boosts)
-    run_after_start(ctx, args.mode, args.no_cookie_relay, args.episode)
+    run_after_start(
+        ctx,
+        args.mode,
+        args.no_cookie_relay,
+        args.fast_start,
+        args.episode,
+    )
     clear_results(ctx)
 
 

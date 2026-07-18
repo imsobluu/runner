@@ -42,6 +42,7 @@ assert auto_runner.FAST_START_0_TARGET.threshold == 0.99
 assert auto_runner.FAST_START_0_TARGET.attempts == 1
 assert auto_runner.RESULT_OK_TARGET.attempts == 120
 assert menu.SCREENSHOTS_DIR == auto_runner.REPO_ROOT / "screenshots"
+assert hasattr(auto_runner, "ACTIVATE_FAST_START_TEMPLATE")
 
 # The final gameplay-start tap accepts both boosted and plain Play screens,
 # preferring the more specific Double Coins template when both could match.
@@ -137,11 +138,13 @@ try:
         ctx,
         "none",
         auto_runner.ACTIVATE_COOKIE_RELAY_TEMPLATE,
+        auto_runner.ACTIVATE_FAST_START_TEMPLATE,
         None,
     )
     assert runner is instances[0]
     assert instances[0].kwargs["exit_template"] == auto_runner.RESULT_OK_BUTTON_TEMPLATE
     assert instances[0].kwargs["relay_template"] == auto_runner.ACTIVATE_COOKIE_RELAY_TEMPLATE
+    assert instances[0].kwargs["fast_start_template"] == auto_runner.ACTIVATE_FAST_START_TEMPLATE
 finally:
     if previous is None:
         del sys.modules["avd_runner.none"]
@@ -155,17 +158,37 @@ try:
         ctx,
         "levels",
         auto_runner.ACTIVATE_COOKIE_RELAY_TEMPLATE,
+        auto_runner.ACTIVATE_FAST_START_TEMPLATE,
         episode_dir,
     )
     assert runner is instances[0]
     assert instances[0].args[2] == auto_runner.ASSETS
     assert instances[0].args[3] == episode_dir
     assert instances[0].kwargs["relay_template"] == auto_runner.ACTIVATE_COOKIE_RELAY_TEMPLATE
+    assert instances[0].kwargs["fast_start_template"] == auto_runner.ACTIVATE_FAST_START_TEMPLATE
 finally:
     if previous is None:
         del sys.modules["avd_runner.levels"]
     else:
         sys.modules["avd_runner.levels"] = previous
+
+previous, instances = fake_runner_module("avd_runner.reactive", "ReactiveRunner")
+try:
+    runner = auto_runner.build_gameplay_runner(
+        ctx,
+        "reactive",
+        auto_runner.ACTIVATE_COOKIE_RELAY_TEMPLATE,
+        auto_runner.ACTIVATE_FAST_START_TEMPLATE,
+        None,
+    )
+    assert runner is instances[0]
+    assert instances[0].kwargs["relay_template"] == auto_runner.ACTIVATE_COOKIE_RELAY_TEMPLATE
+    assert instances[0].kwargs["fast_start_template"] == auto_runner.ACTIVATE_FAST_START_TEMPLATE
+finally:
+    if previous is None:
+        del sys.modules["avd_runner.reactive"]
+    else:
+        sys.modules["avd_runner.reactive"] = previous
 
 # run_after_start must keep validating levels recordings before the final Play
 # tap, so a bad episode does not spend a run.
@@ -174,13 +197,37 @@ tap_calls = []
 try:
     auto_runner.tap_play_with_double_coins_button = lambda _ctx: tap_calls.append("tap") or True
     try:
-        auto_runner.run_after_start(ctx, "levels", False, "definitely_missing_episode")
+        auto_runner.run_after_start(ctx, "levels", False, True, "definitely_missing_episode")
     except auto_runner.RunnerError as exc:
         assert "No recordings for episode" in str(exc)
     else:
         raise AssertionError("missing episode should stop run_after_start")
     assert tap_calls == []
 finally:
+    auto_runner.tap_play_with_double_coins_button = original_tap_play_with_double_coins_button
+
+# --fast-start maps to an optional gameplay-runner template without changing
+# the existing Cookie Relay template.
+original_build_gameplay_runner = auto_runner.build_gameplay_runner
+original_tap_play_with_double_coins_button = auto_runner.tap_play_with_double_coins_button
+fast_start_templates = []
+
+class FakeGameplayRunner:
+    def run(self):
+        return True
+
+try:
+    auto_runner.tap_play_with_double_coins_button = lambda _ctx: True
+    auto_runner.build_gameplay_runner = (
+        lambda _ctx, _mode, _relay, fast_start, _episode: (
+            fast_start_templates.append(fast_start) or FakeGameplayRunner()
+        )
+    )
+    auto_runner.run_after_start(ctx, "none", False, False, None)
+    auto_runner.run_after_start(ctx, "none", False, True, None)
+    assert fast_start_templates == [None, auto_runner.ACTIVATE_FAST_START_TEMPLATE]
+finally:
+    auto_runner.build_gameplay_runner = original_build_gameplay_runner
     auto_runner.tap_play_with_double_coins_button = original_tap_play_with_double_coins_button
 
 # The optional relic claim runs before the initial Play tap.
@@ -196,11 +243,33 @@ try:
     auto_runner.tap_play_button = lambda _ctx: order.append("play") or True
     auto_runner.ensure_double_coins_setup = lambda _ctx: order.append("double_coins")
     auto_runner.buy_optional_boosts = lambda _ctx, _skip: order.append("boosts")
-    auto_runner.run_after_start = lambda _ctx, _mode, _no_relay, _episode: order.append("gameplay")
+    auto_runner.run_after_start = (
+        lambda _ctx, _mode, _no_relay, fast_start, _episode: order.append(
+            ("gameplay", fast_start)
+        )
+    )
     auto_runner.clear_results = lambda _ctx: order.append("clear")
 
     auto_runner.run_once(ctx, auto_runner.parse_args(["--mode", "none"]))
-    assert order == ["relic", "play", "double_coins", "boosts", "gameplay", "clear"]
+    assert order == [
+        "relic",
+        "play",
+        "double_coins",
+        "boosts",
+        ("gameplay", False),
+        "clear",
+    ]
+
+    order.clear()
+    auto_runner.run_once(ctx, auto_runner.parse_args(["--mode", "none", "--fast-start"]))
+    assert order == [
+        "relic",
+        "play",
+        "double_coins",
+        "boosts",
+        ("gameplay", True),
+        "clear",
+    ]
 
     order.clear()
     skip_args = types.SimpleNamespace(
@@ -209,9 +278,10 @@ try:
         episode=None,
         skip_top_row_boosts=False,
         skip_random_boost=True,
+        fast_start=False,
     )
     auto_runner.run_once(ctx, skip_args)
-    assert order == ["relic", "play", "boosts", "gameplay", "clear"]
+    assert order == ["relic", "play", "boosts", ("gameplay", False), "clear"]
 finally:
     auto_runner.tap_play_button = original_tap_play_button
     auto_runner.claim_relic_if_alert = original_claim_relic_if_alert
@@ -245,6 +315,10 @@ default_args = auto_runner.parse_args([])
 skip_args = auto_runner.parse_args(["--skip-random-boost"])
 assert vars(default_args).get("skip_random_boost") is False
 assert vars(skip_args).get("skip_random_boost") is True
+
+fast_args = auto_runner.parse_args(["--fast-start"])
+assert vars(default_args).get("fast_start") is False
+assert vars(fast_args).get("fast_start") is True
 
 try:
     with redirect_stderr(StringIO()):

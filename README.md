@@ -106,6 +106,8 @@ Other flags: `--episode` (which episode's recordings to replay; defaults to
 the only recorded episode), `--no-captcha` (disable the anti-bot captcha
 solver), `--no-cookie-relay` (don't tap the Activate Cookie Relay banner
 mid-run; `reactive` and `none` modes tap it by default),
+`--fast-start` (tap Activate Fast Start once when it appears during gameplay;
+recorded level replay continues),
 `--skip-top-row-boosts` (don't buy the Double XP / Power Jelly / HP Extension
 boosts during setup), `--skip-random-boost` (skip the Random Boost / Multi /
 Double Coins / Multi Buy setup; the run-start step accepts either the Double
