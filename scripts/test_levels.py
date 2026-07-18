@@ -27,7 +27,20 @@ from avd_runner.levels import (
 from avd_runner.vision import TemplateMatch
 
 
-assert "fast_start_template" in inspect.signature(LevelReplayer).parameters
+levels_signature = inspect.signature(LevelReplayer)
+assert "fast_start_template" in levels_signature.parameters
+old_positional = levels_signature.bind(
+    None,
+    None,
+    Path("assets"),
+    Path("levels"),
+    Path("result.png"),
+    Path("relay.png"),
+    "on-tap",
+    "debug-view",
+)
+assert old_positional.arguments.get("on_tap") == "on-tap"
+assert old_positional.arguments.get("debug_view") == "debug-view"
 assert "fast_start_handled" in ReplayState.__dataclass_fields__
 from scripts.record_levels import LEVEL_END_LOW_FRAMES, level_end_detected, progress_at_time, save_level
 
@@ -292,12 +305,15 @@ fast_state = ReplayState(level=1, in_level=True, recorded=recorded)
 original_find_template = levels_module.find_template
 original_randint = levels_module.random.randint
 original_uniform = levels_module.random.uniform
+fast_start_lookups = {"count": 0}
 try:
-    levels_module.find_template = lambda _frame, template, threshold=0.85: (
-        TemplateMatch(10, 20, 30, 40, 0.99)
-        if template == fast_runner._fast_start_template
-        else None
-    )
+    def find_fast_start(_frame, template, threshold=0.85):
+        if template != fast_runner._fast_start_template:
+            return None
+        fast_start_lookups["count"] += 1
+        return TemplateMatch(10, 20, 30, 40, 0.99)
+
+    levels_module.find_template = find_fast_start
     levels_module.random.randint = lambda _a, _b: 0
     levels_module.random.uniform = lambda _a, _b: 1.0
 
@@ -309,6 +325,7 @@ try:
 
     assert not fast_runner._check_exit_or_relay("fast-frame", fast_state, fast_shell)
     assert len(fast_shell.swipes) == 1
+    assert fast_start_lookups["count"] == 1
     fast_runner._play_due_taps(fast_state, fast_shell, progress=1.0, now=100.0)
     assert len(fast_shell.swipes) == 2
 finally:

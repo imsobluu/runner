@@ -195,10 +195,10 @@ class ReactiveRunner:
         theme_dir: Path,
         exit_template: Path,
         relay_template: Path | None = None,
-        fast_start_template: Path | None = None,
         debug_view=None,  # DebugView; draws lookahead/detection/taps live
         reference_size: tuple[int, int] = (1280, 720),
         frame_size: tuple[int, int] | None = None,
+        fast_start_template: Path | None = None,
     ):
         self._device = device
         self._capture = capture

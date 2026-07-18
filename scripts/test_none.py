@@ -8,7 +8,16 @@ from avd_runner import none
 from avd_runner.vision import TemplateMatch
 
 
-assert "fast_start_template" in inspect.signature(none.NoneRunner).parameters
+none_signature = inspect.signature(none.NoneRunner)
+assert "fast_start_template" in none_signature.parameters
+old_positional = none_signature.bind(
+    None,
+    None,
+    Path("result.png"),
+    Path("relay.png"),
+    "debug-view",
+)
+assert old_positional.arguments.get("debug_view") == "debug-view"
 
 
 class FakeCapture:
@@ -60,12 +69,14 @@ runner = none.NoneRunner(
 original_check_every = none.CHECK_EVERY
 original_find_template = none.find_template
 original_sleep = none.time.sleep
+lookups = {"fast_start": 0}
 try:
     none.CHECK_EVERY = 1
     none.time.sleep = lambda _seconds: None
 
     def fake_find_template(frame, template_path, threshold=0.85):
         if template_path == Path("fast-start.png") and frame in ("frame-1", "frame-2"):
+            lookups["fast_start"] += 1
             return TemplateMatch(x=20, y=30, width=8, height=8, score=0.99)
         if template_path == Path("relay.png") and frame == "frame-2":
             return TemplateMatch(x=10, y=20, width=8, height=8, score=0.99)
@@ -82,6 +93,7 @@ try:
         "relay",
     ]
     assert runner._fast_start_handled
+    assert lookups["fast_start"] == 1
 finally:
     none.CHECK_EVERY = original_check_every
     none.find_template = original_find_template

@@ -294,9 +294,9 @@ class LevelReplayer:
         levels_dir: Path,
         exit_template: Path,
         relay_template: Path | None = None,
-        fast_start_template: Path | None = None,
         on_tap=None,  # on_tap(name, frame, x, y): debug hook for handshake taps
         debug_view=None,  # DebugView; draws marker box and taps live
+        fast_start_template: Path | None = None,
     ):
         self._device = device
         self._capture = capture

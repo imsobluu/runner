@@ -13,7 +13,21 @@ from avd_runner.reactive import ReactiveRunner, detect_obstacle, load_obstacles
 from avd_runner.vision import TemplateMatch
 
 
-assert "fast_start_template" in inspect.signature(ReactiveRunner).parameters
+reactive_signature = inspect.signature(ReactiveRunner)
+assert "fast_start_template" in reactive_signature.parameters
+old_positional = reactive_signature.bind(
+    None,
+    None,
+    Path("theme"),
+    Path("result.png"),
+    Path("relay.png"),
+    "debug-view",
+    (1280, 720),
+    (960, 540),
+)
+assert old_positional.arguments.get("debug_view") == "debug-view"
+assert old_positional.arguments.get("reference_size") == (1280, 720)
+assert old_positional.arguments.get("frame_size") == (960, 540)
 
 
 class FakeCapture:
@@ -133,18 +147,22 @@ helper._fast_start_template = Path("fast-start.png")
 helper._fast_start_handled = False
 helper._tap = lambda shell, x, y, hold_ms, label: shell.swipes.append((x, y, hold_ms, label))
 original_find_template = reactive.find_template
+fast_start_lookups = {"count": 0}
 try:
-    reactive.find_template = lambda _frame, template, threshold=0.85: (
-        TemplateMatch(20, 30, 8, 8, 0.99)
-        if template == Path("fast-start.png")
-        else None
-    )
+    def find_fast_start(_frame, template, threshold=0.85):
+        if template != Path("fast-start.png"):
+            return None
+        fast_start_lookups["count"] += 1
+        return TemplateMatch(20, 30, 8, 8, 0.99)
+
+    reactive.find_template = find_fast_start
     assert not helper._check_exit_or_relay("frame", shell)
     assert helper._fast_start_handled
     assert shell.swipes[-1] == (24, 34, 80, "fast_start")
     fast_start_swipes = len(shell.swipes)
     assert not helper._check_exit_or_relay("frame", shell)
     assert len(shell.swipes) == fast_start_swipes
+    assert fast_start_lookups["count"] == 1
 
     reactive.find_template = lambda _frame, template, threshold=0.85: (
         TemplateMatch(10, 20, 8, 8, 0.99) if template == Path("relay.png") else None

@@ -23,8 +23,8 @@ class NoneRunner:
         capture,  # WindowCapture; untyped to keep this module importable without it
         exit_template: Path,
         relay_template: Path | None = None,
-        fast_start_template: Path | None = None,
         debug_view=None,  # DebugView; keeps the live window fed during the run
+        fast_start_template: Path | None = None,
     ):
         self._device = device
         self._capture = capture
