@@ -19,6 +19,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from avd_runner import AvdDevice
 from avd_runner.capture import WindowCapture, find_render_window_in
+from avd_runner.device import DEFAULT_DEVICE_SIZE
 from avd_runner.levels import LevelReplayer
 from avd_runner.vision import TemplateMatch, find_template, find_template_multiscale
 
@@ -915,38 +916,50 @@ def run_friend_farm_levels(
         print(f"{serial}: WGC capture is unavailable.")
         return False
 
+    replay_capture: WindowCapture | None = None
     try:
+        hwnd = mumu_window_for_serial(serial)
+        if hwnd is None:
+            raise RuntimeError("could not find its MuMu window")
+        replay_capture = WindowCapture(
+            window_hwnd=hwnd,
+            device_size=DEFAULT_DEVICE_SIZE,
+        )
         runner = LevelReplayer(
             AvdDevice(
                 serial=serial,
                 adb_path=adb_path,
-                device_size=device_size,
+                device_size=DEFAULT_DEVICE_SIZE,
+                input_size=device_size,
             ),
-            capture,
+            replay_capture,
             ASSETS,
             FRIEND_FARM_RECORDINGS_DIR,
             exit_template=RESULT_OK_BUTTON_TEMPLATE,
         )
     except Exception as exc:
+        if replay_capture is not None:
+            replay_capture.close()
         print(f"{serial}: could not prepare level replay: {exc}")
         return False
 
-    if not tap_template_on_device(
-        adb_path,
-        serial,
-        capture,
-        device_size,
-        FRIEND_FARM_PLAY_3_TEMPLATE,
-        timeout_seconds,
-        dry_run=False,
-    ):
-        return False
-
     try:
+        if not tap_template_on_device(
+            adb_path,
+            serial,
+            capture,
+            device_size,
+            FRIEND_FARM_PLAY_3_TEMPLATE,
+            timeout_seconds,
+            dry_run=False,
+        ):
+            return False
         return runner.run()
     except Exception as exc:
         print(f"{serial}: level replay failed: {exc}")
         return False
+    finally:
+        replay_capture.close()
 
 
 def run_friend_farm_sequence(

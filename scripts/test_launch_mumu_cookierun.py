@@ -18,11 +18,33 @@ class FakeDevice:
         serial: str,
         adb_path: str,
         device_size: tuple[int, int],
+        input_size: tuple[int, int],
     ):
         assert serial == "serial"
         assert adb_path == "adb"
-        assert device_size == (960, 540)
+        assert device_size == (1280, 720)
+        assert input_size == (960, 540)
         self.events.append("device")
+
+
+class FakeCapture:
+    events: list[str] = []
+    init_error: Exception | None = None
+
+    def __init__(
+        self,
+        *,
+        window_hwnd: int,
+        device_size: tuple[int, int],
+    ):
+        self.events.append("capture")
+        assert window_hwnd == 123
+        assert device_size == (1280, 720)
+        if self.init_error is not None:
+            raise self.init_error
+
+    def close(self) -> None:
+        self.events.append("close")
 
 
 class FakeReplayer:
@@ -40,7 +62,7 @@ class FakeReplayer:
         exit_template: Path,
     ):
         self.events.append("prepare")
-        assert capture == "capture"
+        assert isinstance(capture, FakeCapture)
         assert assets_dir == REPO_ROOT / "assets"
         assert levels_dir == REPO_ROOT / "recordings" / "friend_farm"
         assert exit_template == REPO_ROOT / "assets" / "result_ok_button.png"
@@ -57,6 +79,8 @@ class FakeReplayer:
 def reset() -> list[str]:
     events: list[str] = []
     FakeDevice.events = events
+    FakeCapture.events = events
+    FakeCapture.init_error = None
     FakeReplayer.events = events
     FakeReplayer.init_error = None
     FakeReplayer.run_result = True
@@ -72,12 +96,16 @@ assert hasattr(
 ), "launcher must expose run_friend_farm_levels"
 
 original_device = launcher.AvdDevice
+original_capture = launcher.WindowCapture
 original_replayer = launcher.LevelReplayer
 original_tap = launcher.tap_template_on_device
 original_levels = launcher.run_friend_farm_levels
+original_window = launcher.mumu_window_for_serial
 try:
     launcher.AvdDevice = FakeDevice
+    launcher.WindowCapture = FakeCapture
     launcher.LevelReplayer = FakeReplayer
+    launcher.mumu_window_for_serial = lambda serial: 123
 
     events = reset()
     launcher.tap_template_on_device = (
@@ -86,7 +114,7 @@ try:
     assert launcher.run_friend_farm_levels(
         "adb", "serial", "capture", (960, 540), 3.0, dry_run=False
     )
-    assert events == ["device", "prepare", "tap", "run"]
+    assert events == ["capture", "device", "prepare", "tap", "run", "close"]
 
     events = reset()
     FakeReplayer.init_error = ValueError("missing recordings")
@@ -96,7 +124,7 @@ try:
     assert not launcher.run_friend_farm_levels(
         "adb", "serial", "capture", (960, 540), 3.0, dry_run=False
     )
-    assert events == ["device", "prepare"]
+    assert events == ["capture", "device", "prepare", "close"]
 
     events = reset()
     launcher.tap_template_on_device = (
@@ -108,13 +136,31 @@ try:
     assert events == []
 
     events = reset()
+    launcher.mumu_window_for_serial = lambda serial: None
+    launcher.tap_template_on_device = (
+        lambda *args, **kwargs: events.append("tap") or True
+    )
+    assert not launcher.run_friend_farm_levels(
+        "adb", "serial", "capture", (960, 540), 3.0, dry_run=False
+    )
+    assert events == []
+    launcher.mumu_window_for_serial = lambda serial: 123
+
+    events = reset()
+    FakeCapture.init_error = RuntimeError("capture failed")
+    assert not launcher.run_friend_farm_levels(
+        "adb", "serial", "capture", (960, 540), 3.0, dry_run=False
+    )
+    assert events == ["capture"]
+
+    events = reset()
     launcher.tap_template_on_device = (
         lambda *args, **kwargs: events.append("tap") or False
     )
     assert not launcher.run_friend_farm_levels(
         "adb", "serial", "capture", (960, 540), 3.0, dry_run=False
     )
-    assert events == ["device", "prepare", "tap"]
+    assert events == ["capture", "device", "prepare", "tap", "close"]
 
     events = reset()
     FakeReplayer.run_result = False
@@ -124,7 +170,7 @@ try:
     assert not launcher.run_friend_farm_levels(
         "adb", "serial", "capture", (960, 540), 3.0, dry_run=False
     )
-    assert events == ["device", "prepare", "tap", "run"]
+    assert events == ["capture", "device", "prepare", "tap", "run", "close"]
 
     events = reset()
     FakeReplayer.run_error = RuntimeError("replay failed")
@@ -134,7 +180,7 @@ try:
     assert not launcher.run_friend_farm_levels(
         "adb", "serial", "capture", (960, 540), 3.0, dry_run=False
     )
-    assert events == ["device", "prepare", "tap", "run"]
+    assert events == ["capture", "device", "prepare", "tap", "run", "close"]
 
     events = reset()
     launcher.tap_template_on_device = (
@@ -158,8 +204,10 @@ try:
     assert events[-1] == "levels"
 finally:
     launcher.AvdDevice = original_device
+    launcher.WindowCapture = original_capture
     launcher.LevelReplayer = original_replayer
     launcher.tap_template_on_device = original_tap
     launcher.run_friend_farm_levels = original_levels
+    launcher.mumu_window_for_serial = original_window
 
 print("ok")
