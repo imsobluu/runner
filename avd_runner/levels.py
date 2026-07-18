@@ -274,6 +274,7 @@ class ReplayState:
     in_level: bool = False
     replay_enabled: bool = True
     relay_handled: bool = False
+    fast_start_handled: bool = False
     max_progress: float = 0.0
     stable_low: int = 0
     frame_count: int = 0
@@ -293,6 +294,7 @@ class LevelReplayer:
         levels_dir: Path,
         exit_template: Path,
         relay_template: Path | None = None,
+        fast_start_template: Path | None = None,
         on_tap=None,  # on_tap(name, frame, x, y): debug hook for handshake taps
         debug_view=None,  # DebugView; draws marker box and taps live
     ):
@@ -302,6 +304,7 @@ class LevelReplayer:
         self._levels = load_levels(levels_dir)
         self._exit_template = exit_template
         self._relay_template = relay_template
+        self._fast_start_template = fast_start_template
         self._on_tap = on_tap
         self._debug_view = debug_view
         if not self._levels:
@@ -368,6 +371,20 @@ class LevelReplayer:
         if find_template(frame, self._exit_template, threshold=0.85):
             print("Result screen detected; replay finished.")
             return True
+
+        if not state.fast_start_handled and self._fast_start_template is not None:
+            match = find_template(frame, self._fast_start_template, threshold=0.85)
+            if match:
+                self._tap(
+                    shell,
+                    match.center_x,
+                    match.center_y,
+                    0.08,
+                    background=False,
+                    label="fast_start",
+                )
+                state.fast_start_handled = True
+                print("Tapped Activate Fast Start; recorded replay continues.")
 
         if not state.relay_handled and self._relay_template is not None:
             match = find_template(frame, self._relay_template, threshold=0.85)

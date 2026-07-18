@@ -1,3 +1,4 @@
+import inspect
 import sys
 from pathlib import Path
 
@@ -5,6 +6,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from avd_runner import none
 from avd_runner.vision import TemplateMatch
+
+
+assert "fast_start_template" in inspect.signature(none.NoneRunner).parameters
 
 
 class FakeCapture:
@@ -50,6 +54,7 @@ runner = none.NoneRunner(
     capture,
     exit_template=Path("result.png"),
     relay_template=Path("relay.png"),
+    fast_start_template=Path("fast-start.png"),
 )
 
 original_check_every = none.CHECK_EVERY
@@ -60,18 +65,23 @@ try:
     none.time.sleep = lambda _seconds: None
 
     def fake_find_template(frame, template_path, threshold=0.85):
-        if template_path == Path("relay.png") and frame == "frame-1":
+        if template_path == Path("fast-start.png") and frame in ("frame-1", "frame-2"):
+            return TemplateMatch(x=20, y=30, width=8, height=8, score=0.99)
+        if template_path == Path("relay.png") and frame == "frame-2":
             return TemplateMatch(x=10, y=20, width=8, height=8, score=0.99)
-        if template_path == Path("result.png") and frame == "frame-2":
+        if template_path == Path("result.png") and frame == "frame-3":
             return TemplateMatch(x=100, y=200, width=8, height=8, score=0.99)
         return None
 
     none.find_template = fake_find_template
 
     assert runner.run(max_seconds=1.0)
-    assert capture.count == 2
-    assert len(device.shell.swipes) == 1
-    assert device.shell.swipes[0][1]["label"] == "relay"
+    assert capture.count == 3
+    assert [kwargs["label"] for _args, kwargs in device.shell.swipes] == [
+        "fast_start",
+        "relay",
+    ]
+    assert runner._fast_start_handled
 finally:
     none.CHECK_EVERY = original_check_every
     none.find_template = original_find_template

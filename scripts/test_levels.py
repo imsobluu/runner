@@ -1,3 +1,4 @@
+import inspect
 import json
 import sys
 import tempfile
@@ -24,6 +25,10 @@ from avd_runner.levels import (
     tap_is_due,
 )
 from avd_runner.vision import TemplateMatch
+
+
+assert "fast_start_template" in inspect.signature(LevelReplayer).parameters
+assert "fast_start_handled" in ReplayState.__dataclass_fields__
 from scripts.record_levels import LEVEL_END_LOW_FRAMES, level_end_detected, progress_at_time, save_level
 
 
@@ -223,6 +228,7 @@ runner._levels = {
 }
 runner._exit_template = Path("result.png")
 runner._relay_template = None
+runner._fast_start_template = None
 runner._on_tap = None
 runner._debug_view = None
 
@@ -268,6 +274,48 @@ finally:
     levels_module.random.randint = original_randint
     levels_module.random.uniform = original_uniform
 
+# Activating Fast Start is a one-shot foreground tap that leaves recorded
+# replay enabled and scheduled taps intact.
+fast_runner = object.__new__(LevelReplayer)
+fast_runner._exit_template = Path("result.png")
+fast_runner._relay_template = None
+fast_runner._fast_start_template = Path("activate_fast_start.png")
+fast_shell = FakeShell()
+recorded = {
+    "taps": [
+        {"t": 0.0, "progress": 0.2, "x": 100, "y": 200, "duration": 0.08}
+    ],
+    "path": Path("level_01_001.json"),
+}
+fast_state = ReplayState(level=1, in_level=True, recorded=recorded)
+
+original_find_template = levels_module.find_template
+original_randint = levels_module.random.randint
+original_uniform = levels_module.random.uniform
+try:
+    levels_module.find_template = lambda _frame, template, threshold=0.85: (
+        TemplateMatch(10, 20, 30, 40, 0.99)
+        if template == fast_runner._fast_start_template
+        else None
+    )
+    levels_module.random.randint = lambda _a, _b: 0
+    levels_module.random.uniform = lambda _a, _b: 1.0
+
+    assert not fast_runner._check_exit_or_relay("fast-frame", fast_state, fast_shell)
+    assert fast_state.fast_start_handled
+    assert fast_state.replay_enabled
+    assert fast_state.recorded is recorded
+    assert fast_shell.swipes[0][1] == {"background": False, "label": "fast_start"}
+
+    assert not fast_runner._check_exit_or_relay("fast-frame", fast_state, fast_shell)
+    assert len(fast_shell.swipes) == 1
+    fast_runner._play_due_taps(fast_state, fast_shell, progress=1.0, now=100.0)
+    assert len(fast_shell.swipes) == 2
+finally:
+    levels_module.find_template = original_find_template
+    levels_module.random.randint = original_randint
+    levels_module.random.uniform = original_uniform
+
 # Activating Cookie Relay is a foreground tap and permanently disables future
 # recorded taps, including recordings that exist for later levels.
 relay_runner = object.__new__(LevelReplayer)
@@ -287,6 +335,7 @@ relay_runner._levels = {
 }
 relay_runner._exit_template = Path("result.png")
 relay_runner._relay_template = Path("activate_cookie_relay.png")
+relay_runner._fast_start_template = None
 relay_shell = FakeShell()
 relay_state = ReplayState(
     level=1,

@@ -1,3 +1,4 @@
+import inspect
 import sys
 from pathlib import Path
 
@@ -10,6 +11,9 @@ import numpy as np
 from avd_runner import reactive
 from avd_runner.reactive import ReactiveRunner, detect_obstacle, load_obstacles
 from avd_runner.vision import TemplateMatch
+
+
+assert "fast_start_template" in inspect.signature(ReactiveRunner).parameters
 
 
 class FakeCapture:
@@ -125,9 +129,23 @@ assert helper._debug_view.updates == [
 
 helper._exit_template = Path("result.png")
 helper._relay_template = Path("relay.png")
+helper._fast_start_template = Path("fast-start.png")
+helper._fast_start_handled = False
 helper._tap = lambda shell, x, y, hold_ms, label: shell.swipes.append((x, y, hold_ms, label))
 original_find_template = reactive.find_template
 try:
+    reactive.find_template = lambda _frame, template, threshold=0.85: (
+        TemplateMatch(20, 30, 8, 8, 0.99)
+        if template == Path("fast-start.png")
+        else None
+    )
+    assert not helper._check_exit_or_relay("frame", shell)
+    assert helper._fast_start_handled
+    assert shell.swipes[-1] == (24, 34, 80, "fast_start")
+    fast_start_swipes = len(shell.swipes)
+    assert not helper._check_exit_or_relay("frame", shell)
+    assert len(shell.swipes) == fast_start_swipes
+
     reactive.find_template = lambda _frame, template, threshold=0.85: (
         TemplateMatch(10, 20, 8, 8, 0.99) if template == Path("relay.png") else None
     )
@@ -149,6 +167,8 @@ runner._capture = FakeCapture()
 runner._obstacles = [reactive.Obstacle("fake", "jump", np.zeros((4, 4, 3), dtype=np.uint8))]
 runner._exit_template = Path("result.png")
 runner._relay_template = None
+runner._fast_start_template = None
+runner._fast_start_handled = False
 runner._debug_view = None
 
 original_check_every = reactive.CHECK_EVERY
