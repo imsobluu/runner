@@ -107,7 +107,9 @@ the only recorded episode), `--no-captcha` (disable the anti-bot captcha
 solver), `--no-cookie-relay` (don't tap the Activate Cookie Relay banner
 mid-run; `reactive` and `none` modes tap it by default),
 `--skip-top-row-boosts` (don't buy the Double XP / Power Jelly / HP Extension
-boosts during setup), `--debug` (save the frame of every menu and captcha-card
+boosts during setup), `--skip-random-boost` (skip the Random Boost / Multi /
+Double Coins / Multi Buy setup; the run-start step accepts either the Double
+Coins or plain Play button), `--debug` (save the frame of every menu and captcha-card
 tap, with a red dot at the tap point and its coordinates, to
 `debug/<session id>/runN/<NN>_<name>.png`; gameplay jump/slide taps are
 deliberately not captured to keep their timing untouched), `--debug-window`

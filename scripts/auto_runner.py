@@ -129,7 +129,17 @@ def tap_play_with_double_coins_button(
 ) -> bool:
     # The purchase-complete modal from a boost buy can swallow this tap without
     # covering the button; re-tap until the button actually goes.
-    return tap_target(ctx, PLAY_WITH_DOUBLE_COINS_TARGET, attempts=attempts)
+    targets = (PLAY_WITH_DOUBLE_COINS_TARGET, PLAY_TARGET)
+    seen = wait_for_any_template(
+        ctx,
+        [(target.name, target.path) for target in targets],
+        CAPTCHA_BANNER_TEMPLATE,
+        attempts=attempts,
+    )
+    for target in targets:
+        if target.name == seen:
+            return tap_target(ctx, target, attempts=attempts)
+    return False
 
 
 def tap_random_boost_button(
@@ -365,6 +375,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Skip top row boost checks.",
     )
     parser.add_argument(
+        "--skip-random-boost",
+        action="store_true",
+        help="Skip Random Boost, Multi, Double Coins, and Multi Buy setup.",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Save each tapped frame with a red dot at the tap point to "
@@ -452,7 +467,8 @@ def run_once(ctx: AutoRunnerContext, args: argparse.Namespace) -> None:
     if not tap_play_button(ctx):
         raise RunnerError()
 
-    ensure_double_coins_setup(ctx)
+    if not args.skip_random_boost:
+        ensure_double_coins_setup(ctx)
     buy_optional_boosts(ctx, args.skip_top_row_boosts)
     run_after_start(ctx, args.mode, args.no_cookie_relay, args.episode)
     clear_results(ctx)

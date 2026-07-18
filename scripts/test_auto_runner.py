@@ -43,6 +43,41 @@ assert auto_runner.FAST_START_0_TARGET.attempts == 1
 assert auto_runner.RESULT_OK_TARGET.attempts == 120
 assert menu.SCREENSHOTS_DIR == auto_runner.REPO_ROOT / "screenshots"
 
+# The final gameplay-start tap accepts both boosted and plain Play screens,
+# preferring the more specific Double Coins template when both could match.
+original_wait_for_any_template = auto_runner.wait_for_any_template
+original_tap_target = auto_runner.tap_target
+lookups = []
+tapped = []
+expected_lookup = [
+    (auto_runner.PLAY_WITH_DOUBLE_COINS_TARGET.name, auto_runner.PLAY_WITH_DOUBLE_COINS_TARGET.path),
+    (auto_runner.PLAY_TARGET.name, auto_runner.PLAY_TARGET.path),
+]
+try:
+    for seen, expected_target in (
+        (auto_runner.PLAY_WITH_DOUBLE_COINS_TARGET.name, auto_runner.PLAY_WITH_DOUBLE_COINS_TARGET),
+        (auto_runner.PLAY_TARGET.name, auto_runner.PLAY_TARGET),
+    ):
+        lookups.clear()
+        tapped.clear()
+        auto_runner.wait_for_any_template = (
+            lambda _ctx, targets, _banner, **_kwargs: lookups.append(targets) or seen
+        )
+        auto_runner.tap_target = (
+            lambda _ctx, target, **_kwargs: tapped.append(target) or True
+        )
+        assert auto_runner.tap_play_with_double_coins_button(ctx)
+        assert lookups == [expected_lookup]
+        assert tapped == [expected_target]
+
+    tapped.clear()
+    auto_runner.wait_for_any_template = lambda _ctx, _targets, _banner, **_kwargs: None
+    assert not auto_runner.tap_play_with_double_coins_button(ctx)
+    assert tapped == []
+finally:
+    auto_runner.wait_for_any_template = original_wait_for_any_template
+    auto_runner.tap_target = original_tap_target
+
 # Debug tap saving is scoped to the context and increments per run directory.
 with tempfile.TemporaryDirectory() as td:
     ctx.debug = DebugSession(root=Path(td))
@@ -163,8 +198,20 @@ try:
     auto_runner.buy_optional_boosts = lambda _ctx, _skip: order.append("boosts")
     auto_runner.run_after_start = lambda _ctx, _mode, _no_relay, _episode: order.append("gameplay")
     auto_runner.clear_results = lambda _ctx: order.append("clear")
+
     auto_runner.run_once(ctx, auto_runner.parse_args(["--mode", "none"]))
-    assert order[:2] == ["relic", "play"]
+    assert order == ["relic", "play", "double_coins", "boosts", "gameplay", "clear"]
+
+    order.clear()
+    skip_args = types.SimpleNamespace(
+        mode="none",
+        no_cookie_relay=False,
+        episode=None,
+        skip_top_row_boosts=False,
+        skip_random_boost=True,
+    )
+    auto_runner.run_once(ctx, skip_args)
+    assert order == ["relic", "play", "boosts", "gameplay", "clear"]
 finally:
     auto_runner.tap_play_button = original_tap_play_button
     auto_runner.claim_relic_if_alert = original_claim_relic_if_alert
@@ -193,6 +240,11 @@ finally:
 args = auto_runner.parse_args(["--mode", "none", "--loop-count", "2"])
 assert args.mode == "none"
 assert args.loop_count == 2
+
+default_args = auto_runner.parse_args([])
+skip_args = auto_runner.parse_args(["--skip-random-boost"])
+assert vars(default_args).get("skip_random_boost") is False
+assert vars(skip_args).get("skip_random_boost") is True
 
 try:
     with redirect_stderr(StringIO()):
