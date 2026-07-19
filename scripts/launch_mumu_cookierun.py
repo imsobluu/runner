@@ -20,7 +20,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from avd_runner import AvdDevice
 from avd_runner.capture import WindowCapture, find_render_window_in
 from avd_runner.device import DEFAULT_DEVICE_SIZE
-from avd_runner.levels import LevelReplayer
+from avd_runner.levels import LevelReplayer, load_levels
 from avd_runner.vision import TemplateMatch, find_template, find_template_multiscale
 
 
@@ -47,6 +47,7 @@ FRIEND_FARM_WORKSHOP_SEQUENCE = [
     for name in ("episode.png", "xp-elixir_workshop.png", "enter.png")
 ]
 FRIEND_FARM_PLAY_3_TEMPLATE = FRIEND_FARM_ASSETS / "play_3.png"
+FRIEND_FARM_EARN_XP_TEMPLATE = FRIEND_FARM_ASSETS / "earn_xp.png"
 _transparent_template_cache: dict[str, object] = {}
 
 COMMON_MUMU_MANAGER_PATHS = [
@@ -887,6 +888,76 @@ def launch_chrome_url(
         print(f"{serial}: opened {url} in Chrome")
         return True
     sys.stderr.write(output)
+    return False
+
+
+def load_friend_farm_trace(
+    levels_dir: Path = FRIEND_FARM_RECORDINGS_DIR,
+) -> dict:
+    variants = load_levels(levels_dir).get(1, [])
+    if not variants:
+        raise ValueError(f"No level 1 recording in {levels_dir}")
+    return variants[-1]
+
+
+def replay_friend_farm_trace(
+    device: AvdDevice,
+    menu_capture: WindowCapture,
+    replay_capture: WindowCapture,
+    recorded: dict,
+    trigger_timeout: float,
+    max_seconds: float = 1200.0,
+) -> bool:
+    with device.input_shell() as shell:
+        trigger_deadline = time.perf_counter() + trigger_timeout
+        while time.perf_counter() < trigger_deadline:
+            if find_transparent_template_multiscale(
+                menu_capture.grab(),
+                FRIEND_FARM_EARN_XP_TEMPLATE,
+                threshold=0.9,
+            ):
+                started = time.perf_counter()
+                print(
+                    f"Friend-farm timed replay of {len(recorded['taps'])} taps "
+                    f"from {recorded['path'].name}."
+                )
+                break
+            time.sleep(0.01)
+        else:
+            print("Timed out waiting for earn_xp.png; replay not started.")
+            return False
+
+        taps = recorded["taps"]
+        tap_index = 0
+        deadline = started + max_seconds
+        next_result_check = started
+        while time.perf_counter() < deadline:
+            now = time.perf_counter()
+            if now >= next_result_check:
+                if find_template(
+                    replay_capture.grab(),
+                    RESULT_OK_BUTTON_TEMPLATE,
+                    threshold=0.85,
+                ):
+                    print("Result screen detected; timed replay finished.")
+                    return True
+                next_result_check = now + 0.1
+
+            while tap_index < len(taps) and now - started >= taps[tap_index]["t"]:
+                tap = taps[tap_index]
+                shell.swipe(
+                    tap["x"],
+                    tap["y"],
+                    tap["x"],
+                    tap["y"],
+                    max(1, round(tap["duration"] * 1000)),
+                    background=True,
+                    label="friend_farm_trace",
+                )
+                tap_index += 1
+            time.sleep(0.005)
+
+    print("Timed replay timed out without reaching the result screen.")
     return False
 
 

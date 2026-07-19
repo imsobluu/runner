@@ -1,12 +1,180 @@
 from __future__ import annotations
 
+import json
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import launch_mumu_cookierun as launcher
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    recordings = Path(tmp)
+    level_dir = recordings / "levels" / "level_01"
+    level_dir.mkdir(parents=True)
+    for suffix, x in (("001", 100), ("002", 178)):
+        (level_dir / f"level_01_{suffix}.json").write_text(
+            json.dumps(
+                {
+                    "version": 5,
+                    "level": 1,
+                    "taps": [
+                        {
+                            "t": 0.1,
+                            "progress": 0.01,
+                            "x": x,
+                            "y": 93,
+                            "duration": 0.06,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+    loaded = launcher.load_friend_farm_trace(recordings)
+    assert loaded["path"].name == "level_01_002.json"
+    assert loaded["taps"][0]["x"] == 178
+
+
+class FakeClock:
+    now = 0.0
+
+    @classmethod
+    def perf_counter(cls) -> float:
+        return cls.now
+
+    @classmethod
+    def sleep(cls, seconds: float) -> None:
+        cls.now += seconds
+
+
+class FakeShell:
+    def __init__(self, events: list[tuple]):
+        self.events = events
+
+    def __enter__(self):
+        self.events.append(("shell-open", FakeClock.now))
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.events.append(("shell-close", FakeClock.now))
+
+    def swipe(
+        self,
+        x1: int,
+        y1: int,
+        x2: int,
+        y2: int,
+        duration_ms: int,
+        *,
+        background: bool,
+        label: str,
+    ) -> None:
+        self.events.append(
+            (
+                "swipe",
+                round(FakeClock.now, 3),
+                x1,
+                y1,
+                x2,
+                y2,
+                duration_ms,
+                background,
+                label,
+            )
+        )
+
+
+class TimedDevice:
+    def __init__(self, events: list[tuple]):
+        self.events = events
+
+    def input_shell(self) -> FakeShell:
+        return FakeShell(self.events)
+
+
+class TimedCapture:
+    def __init__(self, name: str):
+        self.name = name
+
+    def grab(self) -> str:
+        return self.name
+
+
+timed_events: list[tuple] = []
+recorded = {
+    "path": Path("level_01_008.json"),
+    "taps": [
+        {"t": 0.10, "progress": 0.01, "x": 178, "y": 93, "duration": 0.06},
+        {"t": 0.20, "progress": 0.02, "x": 178, "y": 93, "duration": 0.08},
+    ],
+}
+original_time = launcher.time
+original_transparent_match = launcher.find_transparent_template_multiscale
+original_find_template = launcher.find_template
+try:
+    FakeClock.now = 0.0
+    launcher.time = FakeClock
+    launcher.find_transparent_template_multiscale = (
+        lambda frame, template, threshold=0.9: object()
+        if FakeClock.now >= 0.05
+        else None
+    )
+    launcher.find_template = (
+        lambda frame, template, threshold=0.85: FakeClock.now >= 0.30
+    )
+    assert launcher.replay_friend_farm_trace(
+        TimedDevice(timed_events),
+        TimedCapture("menu"),
+        TimedCapture("replay"),
+        recorded,
+        trigger_timeout=1.0,
+        max_seconds=1.0,
+    )
+finally:
+    launcher.time = original_time
+    launcher.find_transparent_template_multiscale = original_transparent_match
+    launcher.find_template = original_find_template
+
+swipes = [event for event in timed_events if event[0] == "swipe"]
+assert [event[2:7] for event in swipes] == [
+    (178, 93, 178, 93, 60),
+    (178, 93, 178, 93, 80),
+]
+assert swipes[0][1] >= 0.15
+assert timed_events[0][0] == "shell-open"
+assert timed_events[-1][0] == "shell-close"
+
+for trigger_found, result_found in ((False, False), (True, False)):
+    timeout_events: list[tuple] = []
+    try:
+        FakeClock.now = 0.0
+        launcher.time = FakeClock
+        launcher.find_transparent_template_multiscale = (
+            lambda frame, template, threshold=0.9: object()
+            if trigger_found
+            else None
+        )
+        launcher.find_template = (
+            lambda frame, template, threshold=0.85: result_found
+        )
+        assert not launcher.replay_friend_farm_trace(
+            TimedDevice(timeout_events),
+            TimedCapture("menu"),
+            TimedCapture("replay"),
+            recorded,
+            trigger_timeout=0.05,
+            max_seconds=0.25,
+        )
+    finally:
+        launcher.time = original_time
+        launcher.find_transparent_template_multiscale = original_transparent_match
+        launcher.find_template = original_find_template
+    assert timeout_events[0][0] == "shell-open"
+    assert timeout_events[-1][0] == "shell-close"
 
 
 class FakeDevice:
