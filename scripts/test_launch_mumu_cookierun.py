@@ -16,10 +16,11 @@ with tempfile.TemporaryDirectory() as tmp:
     level_dir = recordings / "levels" / "level_01"
     level_dir.mkdir(parents=True)
     for suffix, x in (("001", 100), ("002", 178)):
+        version = 4 if suffix == "001" else 5
         (level_dir / f"level_01_{suffix}.json").write_text(
             json.dumps(
                 {
-                    "version": 5,
+                    "version": version,
                     "level": 1,
                     "taps": [
                         {
@@ -37,6 +38,30 @@ with tempfile.TemporaryDirectory() as tmp:
     loaded = launcher.load_friend_farm_trace(recordings)
     assert loaded["path"].name == "level_01_002.json"
     assert loaded["taps"][0]["x"] == 178
+
+with tempfile.TemporaryDirectory() as tmp:
+    recordings = Path(tmp)
+    level_dir = recordings / "levels" / "level_01"
+    level_dir.mkdir(parents=True)
+    malformed = level_dir / "level_01_001.json"
+    malformed.write_text(
+        json.dumps(
+            {
+                "version": 5,
+                "level": 1,
+                "taps": [
+                    {"t": 0.1, "progress": 0.01, "x": 178, "y": 93}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    try:
+        launcher.load_friend_farm_trace(recordings)
+    except ValueError as exc:
+        assert "duration" in str(exc)
+    else:
+        raise AssertionError("malformed timed trace was accepted")
 
 
 class FakeClock:
@@ -282,12 +307,22 @@ try:
 
     events = reset()
     launcher.tap_template_on_device = (
-        lambda *args, **kwargs: events.append("tap") or True
+        lambda *args, **kwargs: events.append(
+            f"tap:{kwargs.get('post_tap_delay')}"
+        )
+        or True
     )
     assert launcher.run_friend_farm_levels(
         "adb", "serial", "capture", (960, 540), 3.0, dry_run=False
     )
-    assert events == ["load", "capture", "device", "tap", "replay", "close"]
+    assert events == [
+        "load",
+        "capture",
+        "device",
+        "tap:0.0",
+        "replay",
+        "close",
+    ]
 
     events = reset()
     fake_load_error = ValueError("missing recordings")

@@ -20,7 +20,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from avd_runner import AvdDevice
 from avd_runner.capture import WindowCapture, find_render_window_in
 from avd_runner.device import DEFAULT_DEVICE_SIZE
-from avd_runner.levels import load_levels
+from avd_runner.levels import TRACE_VERSION
 from avd_runner.vision import TemplateMatch, find_template, find_template_multiscale
 
 
@@ -512,6 +512,7 @@ def tap_template_on_device(
     timeout_seconds: float,
     *,
     dry_run: bool,
+    post_tap_delay: float = 1.5,
 ) -> bool:
     if dry_run:
         print(f"{serial}: wait for and tap {template}")
@@ -547,7 +548,8 @@ def tap_template_on_device(
                     f"{serial}: tapped {template.name} "
                     f"({match.score:.3f})"
                 )
-                time.sleep(1.5)
+                if post_tap_delay > 0:
+                    time.sleep(post_tap_delay)
                 return True
         time.sleep(1)
 
@@ -894,10 +896,51 @@ def launch_chrome_url(
 def load_friend_farm_trace(
     levels_dir: Path = FRIEND_FARM_RECORDINGS_DIR,
 ) -> dict:
-    variants = load_levels(levels_dir).get(1, [])
-    if not variants:
+    paths = sorted(Path(levels_dir).glob("levels/level_01/level_01_*.json"))
+    if not paths:
         raise ValueError(f"No level 1 recording in {levels_dir}")
-    return variants[-1]
+    path = paths[-1]
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("version") != TRACE_VERSION:
+        raise ValueError(f"{path} is not trace format v{TRACE_VERSION}")
+    if data.get("level") != 1:
+        raise ValueError(f"{path} is not a level 1 trace")
+    taps = data.get("taps")
+    if not isinstance(taps, list) or not taps:
+        raise ValueError(f"{path} has no taps")
+    previous_t = -1.0
+    for index, tap in enumerate(taps):
+        if not isinstance(tap, dict):
+            raise ValueError(f"{path} tap {index} is not an object")
+        for field in ("t", "x", "y", "duration"):
+            if field not in tap:
+                raise ValueError(f"{path} tap {index} is missing {field}")
+        if (
+            isinstance(tap["t"], bool)
+            or not isinstance(tap["t"], (int, float))
+            or not math.isfinite(tap["t"])
+            or tap["t"] < previous_t
+        ):
+            raise ValueError(f"{path} tap {index} has invalid t")
+        if (
+            isinstance(tap["duration"], bool)
+            or not isinstance(tap["duration"], (int, float))
+            or not math.isfinite(tap["duration"])
+            or tap["duration"] < 0
+        ):
+            raise ValueError(f"{path} tap {index} has invalid duration")
+        width, height = DEFAULT_DEVICE_SIZE
+        if (
+            isinstance(tap["x"], bool)
+            or not isinstance(tap["x"], int)
+            or not 0 <= tap["x"] < width
+            or isinstance(tap["y"], bool)
+            or not isinstance(tap["y"], int)
+            or not 0 <= tap["y"] < height
+        ):
+            raise ValueError(f"{path} tap {index} has invalid coordinates")
+        previous_t = tap["t"]
+    return {"taps": taps, "path": path}
 
 
 def replay_friend_farm_trace(
@@ -1018,6 +1061,7 @@ def run_friend_farm_levels(
             FRIEND_FARM_PLAY_3_TEMPLATE,
             timeout_seconds,
             dry_run=False,
+            post_tap_delay=0.0,
         ):
             return False
         return replay_friend_farm_trace(
