@@ -62,6 +62,30 @@ with tempfile.TemporaryDirectory() as tmp:
         assert "duration" in str(exc)
     else:
         raise AssertionError("malformed timed trace was accepted")
+    malformed.write_text(
+        json.dumps(
+            {
+                "version": 5,
+                "level": 1,
+                "taps": [
+                    {
+                        "t": -0.1,
+                        "progress": 0.01,
+                        "x": 178,
+                        "y": 93,
+                        "duration": 0.06,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    try:
+        launcher.load_friend_farm_trace(recordings)
+    except ValueError as exc:
+        assert "invalid t" in str(exc)
+    else:
+        raise AssertionError("negative trace time was accepted")
 
 
 class FakeClock:

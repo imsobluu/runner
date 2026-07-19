@@ -919,6 +919,7 @@ def load_friend_farm_trace(
             isinstance(tap["t"], bool)
             or not isinstance(tap["t"], (int, float))
             or not math.isfinite(tap["t"])
+            or tap["t"] < 0
             or tap["t"] < previous_t
         ):
             raise ValueError(f"{path} tap {index} has invalid t")
