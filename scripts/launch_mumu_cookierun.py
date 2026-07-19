@@ -20,7 +20,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from avd_runner import AvdDevice
 from avd_runner.capture import WindowCapture, find_render_window_in
 from avd_runner.device import DEFAULT_DEVICE_SIZE
-from avd_runner.levels import LevelReplayer, load_levels
+from avd_runner.levels import load_levels
 from avd_runner.vision import TemplateMatch, find_template, find_template_multiscale
 
 
@@ -989,6 +989,7 @@ def run_friend_farm_levels(
 
     replay_capture: WindowCapture | None = None
     try:
+        recorded = load_friend_farm_trace()
         hwnd = mumu_window_for_serial(serial)
         if hwnd is None:
             raise RuntimeError("could not find its MuMu window")
@@ -996,22 +997,16 @@ def run_friend_farm_levels(
             window_hwnd=hwnd,
             device_size=DEFAULT_DEVICE_SIZE,
         )
-        runner = LevelReplayer(
-            AvdDevice(
-                serial=serial,
-                adb_path=adb_path,
-                device_size=DEFAULT_DEVICE_SIZE,
-                input_size=device_size,
-            ),
-            replay_capture,
-            ASSETS,
-            FRIEND_FARM_RECORDINGS_DIR,
-            exit_template=RESULT_OK_BUTTON_TEMPLATE,
+        replay_device = AvdDevice(
+            serial=serial,
+            adb_path=adb_path,
+            device_size=DEFAULT_DEVICE_SIZE,
+            input_size=device_size,
         )
     except Exception as exc:
         if replay_capture is not None:
             replay_capture.close()
-        print(f"{serial}: could not prepare level replay: {exc}")
+        print(f"{serial}: could not prepare timed replay: {exc}")
         return False
 
     try:
@@ -1025,9 +1020,15 @@ def run_friend_farm_levels(
             dry_run=False,
         ):
             return False
-        return runner.run()
+        return replay_friend_farm_trace(
+            replay_device,
+            capture,
+            replay_capture,
+            recorded,
+            timeout_seconds,
+        )
     except Exception as exc:
-        print(f"{serial}: level replay failed: {exc}")
+        print(f"{serial}: timed replay failed: {exc}")
         return False
     finally:
         replay_capture.close()

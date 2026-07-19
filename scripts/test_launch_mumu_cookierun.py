@@ -215,49 +215,52 @@ class FakeCapture:
         self.events.append("close")
 
 
-class FakeReplayer:
-    events: list[str] = []
-    init_error: Exception | None = None
-    run_result = True
-    run_error: Exception | None = None
+fake_trace = {"path": Path("level_01_008.json"), "taps": []}
+fake_load_error: Exception | None = None
+fake_replay_result = True
+fake_replay_error: Exception | None = None
 
-    def __init__(
-        self,
-        device,
-        capture,
-        assets_dir: Path,
-        levels_dir: Path,
-        exit_template: Path,
-    ):
-        self.events.append("prepare")
-        assert isinstance(capture, FakeCapture)
-        assert assets_dir == REPO_ROOT / "assets"
-        assert levels_dir == REPO_ROOT / "recordings" / "friend_farm"
-        assert exit_template == REPO_ROOT / "assets" / "result_ok_button.png"
-        if self.init_error is not None:
-            raise self.init_error
 
-    def run(self) -> bool:
-        self.events.append("run")
-        if self.run_error is not None:
-            raise self.run_error
-        return self.run_result
+def fake_load_trace() -> dict:
+    events.append("load")
+    if fake_load_error is not None:
+        raise fake_load_error
+    return fake_trace
+
+
+def fake_timed_replay(
+    device,
+    menu_capture,
+    replay_capture,
+    recorded,
+    trigger_timeout: float,
+) -> bool:
+    events.append("replay")
+    assert isinstance(device, FakeDevice)
+    assert menu_capture == "capture"
+    assert isinstance(replay_capture, FakeCapture)
+    assert recorded is fake_trace
+    assert trigger_timeout == 3.0
+    if fake_replay_error is not None:
+        raise fake_replay_error
+    return fake_replay_result
 
 
 def reset() -> list[str]:
+    global fake_load_error, fake_replay_result, fake_replay_error
     events: list[str] = []
     FakeDevice.events = events
     FakeCapture.events = events
     FakeCapture.init_error = None
-    FakeReplayer.events = events
-    FakeReplayer.init_error = None
-    FakeReplayer.run_result = True
-    FakeReplayer.run_error = None
+    fake_load_error = None
+    fake_replay_result = True
+    fake_replay_error = None
     return events
 
 
 assert hasattr(launcher, "AvdDevice"), "launcher must expose AvdDevice"
-assert hasattr(launcher, "LevelReplayer"), "launcher must expose LevelReplayer"
+assert hasattr(launcher, "load_friend_farm_trace")
+assert hasattr(launcher, "replay_friend_farm_trace")
 assert hasattr(
     launcher,
     "run_friend_farm_levels",
@@ -265,14 +268,16 @@ assert hasattr(
 
 original_device = launcher.AvdDevice
 original_capture = launcher.WindowCapture
-original_replayer = launcher.LevelReplayer
+original_load_trace = launcher.load_friend_farm_trace
+original_timed_replay = launcher.replay_friend_farm_trace
 original_tap = launcher.tap_template_on_device
 original_levels = launcher.run_friend_farm_levels
 original_window = launcher.mumu_window_for_serial
 try:
     launcher.AvdDevice = FakeDevice
     launcher.WindowCapture = FakeCapture
-    launcher.LevelReplayer = FakeReplayer
+    launcher.load_friend_farm_trace = fake_load_trace
+    launcher.replay_friend_farm_trace = fake_timed_replay
     launcher.mumu_window_for_serial = lambda serial: 123
 
     events = reset()
@@ -282,17 +287,17 @@ try:
     assert launcher.run_friend_farm_levels(
         "adb", "serial", "capture", (960, 540), 3.0, dry_run=False
     )
-    assert events == ["capture", "device", "prepare", "tap", "run", "close"]
+    assert events == ["load", "capture", "device", "tap", "replay", "close"]
 
     events = reset()
-    FakeReplayer.init_error = ValueError("missing recordings")
+    fake_load_error = ValueError("missing recordings")
     launcher.tap_template_on_device = (
         lambda *args, **kwargs: events.append("tap") or True
     )
     assert not launcher.run_friend_farm_levels(
         "adb", "serial", "capture", (960, 540), 3.0, dry_run=False
     )
-    assert events == ["capture", "device", "prepare", "close"]
+    assert events == ["load"]
 
     events = reset()
     launcher.tap_template_on_device = (
@@ -311,7 +316,7 @@ try:
     assert not launcher.run_friend_farm_levels(
         "adb", "serial", "capture", (960, 540), 3.0, dry_run=False
     )
-    assert events == []
+    assert events == ["load"]
     launcher.mumu_window_for_serial = lambda serial: 123
 
     events = reset()
@@ -319,7 +324,7 @@ try:
     assert not launcher.run_friend_farm_levels(
         "adb", "serial", "capture", (960, 540), 3.0, dry_run=False
     )
-    assert events == ["capture"]
+    assert events == ["load", "capture"]
 
     events = reset()
     launcher.tap_template_on_device = (
@@ -328,27 +333,27 @@ try:
     assert not launcher.run_friend_farm_levels(
         "adb", "serial", "capture", (960, 540), 3.0, dry_run=False
     )
-    assert events == ["capture", "device", "prepare", "tap", "close"]
+    assert events == ["load", "capture", "device", "tap", "close"]
 
     events = reset()
-    FakeReplayer.run_result = False
+    fake_replay_result = False
     launcher.tap_template_on_device = (
         lambda *args, **kwargs: events.append("tap") or True
     )
     assert not launcher.run_friend_farm_levels(
         "adb", "serial", "capture", (960, 540), 3.0, dry_run=False
     )
-    assert events == ["capture", "device", "prepare", "tap", "run", "close"]
+    assert events == ["load", "capture", "device", "tap", "replay", "close"]
 
     events = reset()
-    FakeReplayer.run_error = RuntimeError("replay failed")
+    fake_replay_error = RuntimeError("replay failed")
     launcher.tap_template_on_device = (
         lambda *args, **kwargs: events.append("tap") or True
     )
     assert not launcher.run_friend_farm_levels(
         "adb", "serial", "capture", (960, 540), 3.0, dry_run=False
     )
-    assert events == ["capture", "device", "prepare", "tap", "run", "close"]
+    assert events == ["load", "capture", "device", "tap", "replay", "close"]
 
     events = reset()
     launcher.tap_template_on_device = (
@@ -373,7 +378,8 @@ try:
 finally:
     launcher.AvdDevice = original_device
     launcher.WindowCapture = original_capture
-    launcher.LevelReplayer = original_replayer
+    launcher.load_friend_farm_trace = original_load_trace
+    launcher.replay_friend_farm_trace = original_timed_replay
     launcher.tap_template_on_device = original_tap
     launcher.run_friend_farm_levels = original_levels
     launcher.mumu_window_for_serial = original_window
