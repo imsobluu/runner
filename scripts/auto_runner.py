@@ -1,7 +1,7 @@
 import argparse
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from collections.abc import Sequence
 
@@ -17,6 +17,7 @@ from avd_runner.menu import (
     wait_for_any_template,
     wait_for_template,
 )
+from avd_runner.mystery_box import MysteryBoxCapture, MysteryBoxTargetReached
 
 
 ASSETS = REPO_ROOT / "assets"
@@ -69,6 +70,9 @@ RESULT_OK_BUTTON_TEMPLATE = ASSETS / "result_ok_button.png"
 OPEN_ALL_MYSTERY_BOX_BUTTON_TEMPLATE = ASSETS / "open_all_mystery_box_button.png"
 CONFIRM_MYSTERY_BOX_BUTTON_TEMPLATE = ASSETS / "confirm_mystery_box_button.png"
 LEVEL_UP_CONFIRM_BUTTON_TEMPLATE = ASSETS / "level_up_confirm_button.png"
+MYSTERY_BOX_TEMPLATE = ASSETS / "mystery_box.png"
+PAUSE_TEMPLATE = ASSETS / "pause.png"
+QUIT_TEMPLATE = ASSETS / "quit.png"
 LEVEL_RECORDINGS_DIR = REPO_ROOT / "recordings" / "episodes"
 
 PLAY_TARGET = TemplateTarget("Play", PLAY_BUTTON_TEMPLATE)
@@ -96,6 +100,8 @@ RESULT_OK_TARGET = TemplateTarget("Result OK", RESULT_OK_BUTTON_TEMPLATE, attemp
 OPEN_ALL_MYSTERY_BOX_TARGET = TemplateTarget("Open All Mystery Box", OPEN_ALL_MYSTERY_BOX_BUTTON_TEMPLATE)
 CONFIRM_MYSTERY_BOX_TARGET = TemplateTarget("Confirm Mystery Box", CONFIRM_MYSTERY_BOX_BUTTON_TEMPLATE)
 LEVEL_UP_CONFIRM_TARGET = TemplateTarget("Level Up Confirm", LEVEL_UP_CONFIRM_BUTTON_TEMPLATE)
+PAUSE_TARGET = TemplateTarget("Pause", PAUSE_TEMPLATE, attempts=120)
+QUIT_TARGET = TemplateTarget("Quit", QUIT_TEMPLATE, attempts=120)
 
 
 def tap_target(
@@ -318,6 +324,7 @@ def run_after_start(
     no_cookie_relay: bool,
     fast_start: bool,
     episode: str | None,
+    quit_on_collect_mystery_box: int | None = None,
 ) -> None:
     # Resolve before tapping Play so a missing episode fails without
     # starting (and wasting) a run.
@@ -329,14 +336,31 @@ def run_after_start(
     if not tap_play_with_double_coins_button(ctx):
         raise RunnerError()
 
+    runner_ctx = ctx
+    if quit_on_collect_mystery_box is not None:
+        runner_ctx = replace(
+            ctx,
+            capture=MysteryBoxCapture(
+                ctx.capture,
+                MYSTERY_BOX_TEMPLATE,
+                quit_on_collect_mystery_box,
+            ),
+        )
+
     runner = build_gameplay_runner(
-        ctx,
+        runner_ctx,
         mode,
         relay_template,
         fast_start_template,
         episode_dir,
     )
-    if not runner.run():
+    try:
+        completed = runner.run()
+    except MysteryBoxTargetReached as exc:
+        print(str(exc))
+        quit_gameplay(ctx)
+        completed = True
+    if not completed:
         raise RunnerError()
 
 
@@ -398,6 +422,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Skip Random Boost, Multi, Double Coins, and Multi Buy setup.",
     )
     parser.add_argument(
+        "--quit-on-collect-mystery-box",
+        type=int,
+        help="Pause and quit gameplay after collecting exactly this many mystery boxes.",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Save each tapped frame with a red dot at the tap point to "
@@ -412,6 +441,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.loop_count is not None and args.loop_count < 1:
         parser.error("--loop-count must be at least 1")
+    if (
+        args.quit_on_collect_mystery_box is not None
+        and args.quit_on_collect_mystery_box < 1
+    ):
+        parser.error("--quit-on-collect-mystery-box must be at least 1")
     return args
 
 
@@ -480,6 +514,14 @@ def clear_results(ctx: AutoRunnerContext) -> None:
     tap_level_up_confirm_button(ctx)
 
 
+def quit_gameplay(ctx: AutoRunnerContext) -> None:
+    for target in (PAUSE_TARGET, QUIT_TARGET, QUIT_TARGET):
+        if not tap_target(ctx, target):
+            raise RunnerError(
+                f"Could not tap {target.path.name} while quitting gameplay."
+            )
+
+
 def run_once(ctx: AutoRunnerContext, args: argparse.Namespace) -> None:
     claim_relic_if_alert(ctx)
     if not tap_play_button(ctx):
@@ -494,6 +536,7 @@ def run_once(ctx: AutoRunnerContext, args: argparse.Namespace) -> None:
         args.no_cookie_relay,
         args.fast_start,
         args.episode,
+        args.quit_on_collect_mystery_box,
     )
     clear_results(ctx)
 

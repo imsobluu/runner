@@ -43,6 +43,8 @@ assert auto_runner.FAST_START_0_TARGET.attempts == 1
 assert auto_runner.RESULT_OK_TARGET.attempts == 120
 assert menu.SCREENSHOTS_DIR == auto_runner.REPO_ROOT / "screenshots"
 assert hasattr(auto_runner, "ACTIVATE_FAST_START_TEMPLATE")
+assert auto_runner.PAUSE_TARGET.path == auto_runner.ASSETS / "pause.png"
+assert auto_runner.QUIT_TARGET.path == auto_runner.ASSETS / "quit.png"
 
 # The final gameplay-start tap accepts both boosted and plain Play screens,
 # preferring the more specific Double Coins template when both could match.
@@ -77,6 +79,19 @@ try:
     assert tapped == []
 finally:
     auto_runner.wait_for_any_template = original_wait_for_any_template
+    auto_runner.tap_target = original_tap_target
+
+# Reaching the configured collection target exits gameplay through the exact
+# pause -> quit -> confirm-quit template sequence.
+original_tap_target = auto_runner.tap_target
+quit_sequence = []
+try:
+    auto_runner.tap_target = (
+        lambda _ctx, target, **_kwargs: quit_sequence.append(target.name) or True
+    )
+    auto_runner.quit_gameplay(ctx)
+    assert quit_sequence == ["Pause", "Quit", "Quit"]
+finally:
     auto_runner.tap_target = original_tap_target
 
 # Debug tap saving is scoped to the context and increments per run directory.
@@ -230,6 +245,34 @@ finally:
     auto_runner.build_gameplay_runner = original_build_gameplay_runner
     auto_runner.tap_play_with_double_coins_button = original_tap_play_with_double_coins_button
 
+# A mystery-box target signal runs the quit sequence and then returns normally
+# so the caller can continue with result cleanup.
+class TargetRunner:
+    def run(self):
+        raise auto_runner.MysteryBoxTargetReached(2)
+
+
+original_tap_play_with_double_coins_button = auto_runner.tap_play_with_double_coins_button
+original_quit_gameplay = auto_runner.quit_gameplay
+original_build_gameplay_runner = auto_runner.build_gameplay_runner
+quit_calls = []
+captures = []
+try:
+    auto_runner.tap_play_with_double_coins_button = lambda _ctx: True
+    auto_runner.quit_gameplay = lambda _ctx: quit_calls.append("quit")
+    auto_runner.build_gameplay_runner = (
+        lambda runner_ctx, _mode, _relay, _fast_start, _episode: (
+            captures.append(runner_ctx.capture) or TargetRunner()
+        )
+    )
+    auto_runner.run_after_start(ctx, "none", False, False, None, 2)
+    assert isinstance(captures[0], auto_runner.MysteryBoxCapture)
+    assert quit_calls == ["quit"]
+finally:
+    auto_runner.tap_play_with_double_coins_button = original_tap_play_with_double_coins_button
+    auto_runner.quit_gameplay = original_quit_gameplay
+    auto_runner.build_gameplay_runner = original_build_gameplay_runner
+
 # The optional relic claim runs before the initial Play tap.
 original_tap_play_button = auto_runner.tap_play_button
 original_claim_relic_if_alert = auto_runner.claim_relic_if_alert
@@ -244,8 +287,8 @@ try:
     auto_runner.ensure_double_coins_setup = lambda _ctx: order.append("double_coins")
     auto_runner.buy_optional_boosts = lambda _ctx, _skip: order.append("boosts")
     auto_runner.run_after_start = (
-        lambda _ctx, _mode, _no_relay, fast_start, _episode: order.append(
-            ("gameplay", fast_start)
+        lambda _ctx, _mode, _no_relay, fast_start, _episode, mystery_target: order.append(
+            ("gameplay", fast_start, mystery_target)
         )
     )
     auto_runner.clear_results = lambda _ctx: order.append("clear")
@@ -256,7 +299,7 @@ try:
         "play",
         "double_coins",
         "boosts",
-        ("gameplay", False),
+        ("gameplay", False, None),
         "clear",
     ]
 
@@ -267,7 +310,7 @@ try:
         "play",
         "double_coins",
         "boosts",
-        ("gameplay", True),
+        ("gameplay", True, None),
         "clear",
     ]
 
@@ -279,9 +322,10 @@ try:
         skip_top_row_boosts=False,
         skip_random_boost=True,
         fast_start=False,
+        quit_on_collect_mystery_box=None,
     )
     auto_runner.run_once(ctx, skip_args)
-    assert order == ["relic", "play", "boosts", ("gameplay", False), "clear"]
+    assert order == ["relic", "play", "boosts", ("gameplay", False, None), "clear"]
 finally:
     auto_runner.tap_play_button = original_tap_play_button
     auto_runner.claim_relic_if_alert = original_claim_relic_if_alert
@@ -310,6 +354,18 @@ finally:
 args = auto_runner.parse_args(["--mode", "none", "--loop-count", "2"])
 assert args.mode == "none"
 assert args.loop_count == 2
+
+mystery_args = auto_runner.parse_args(["--quit-on-collect-mystery-box", "3"])
+assert mystery_args.quit_on_collect_mystery_box == 3
+assert auto_runner.parse_args([]).quit_on_collect_mystery_box is None
+
+try:
+    with redirect_stderr(StringIO()):
+        auto_runner.parse_args(["--quit-on-collect-mystery-box", "0"])
+except SystemExit:
+    pass
+else:
+    raise AssertionError("mystery-box target 0 should be rejected")
 
 default_args = auto_runner.parse_args([])
 skip_args = auto_runner.parse_args(["--skip-random-boost"])
