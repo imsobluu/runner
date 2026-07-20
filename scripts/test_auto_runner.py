@@ -84,15 +84,24 @@ finally:
 # Reaching the configured collection target exits gameplay through the exact
 # pause -> quit -> confirm-quit template sequence.
 original_tap_target = auto_runner.tap_target
+original_wait = auto_runner.wait
 quit_sequence = []
 try:
     auto_runner.tap_target = (
         lambda _ctx, target, **_kwargs: quit_sequence.append(target.name) or True
     )
+    auto_runner.wait = lambda seconds: quit_sequence.append(("wait", seconds))
     auto_runner.quit_gameplay(ctx)
-    assert quit_sequence == ["Pause", "Quit", "Quit"]
+    assert quit_sequence == [
+        "Pause",
+        ("wait", 0.5),
+        "Quit",
+        ("wait", 0.5),
+        "Quit",
+    ]
 finally:
     auto_runner.tap_target = original_tap_target
+    auto_runner.wait = original_wait
 
 # Debug tap saving is scoped to the context and increments per run directory.
 with tempfile.TemporaryDirectory() as td:
@@ -271,6 +280,30 @@ try:
 finally:
     auto_runner.tap_play_with_double_coins_button = original_tap_play_with_double_coins_button
     auto_runner.quit_gameplay = original_quit_gameplay
+    auto_runner.build_gameplay_runner = original_build_gameplay_runner
+
+# OCR setup/inference failures use the runner's controlled error path instead
+# of leaking a traceback from the gameplay loop.
+class BrokenOCRRunner:
+    def run(self):
+        raise auto_runner.MysteryBoxOCRError("OCR unavailable")
+
+
+original_tap_play_with_double_coins_button = auto_runner.tap_play_with_double_coins_button
+original_build_gameplay_runner = auto_runner.build_gameplay_runner
+try:
+    auto_runner.tap_play_with_double_coins_button = lambda _ctx: True
+    auto_runner.build_gameplay_runner = (
+        lambda _ctx, _mode, _relay, _fast_start, _episode: BrokenOCRRunner()
+    )
+    try:
+        auto_runner.run_after_start(ctx, "none", False, False, None, 2)
+    except auto_runner.RunnerError as exc:
+        assert str(exc) == "OCR unavailable"
+    else:
+        raise AssertionError("OCR errors should be translated to RunnerError")
+finally:
+    auto_runner.tap_play_with_double_coins_button = original_tap_play_with_double_coins_button
     auto_runner.build_gameplay_runner = original_build_gameplay_runner
 
 # The optional relic claim runs before the initial Play tap.

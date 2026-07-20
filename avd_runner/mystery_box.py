@@ -12,6 +12,10 @@ class MysteryBoxTargetReached(RuntimeError):
         self.count = count
 
 
+class MysteryBoxOCRError(RuntimeError):
+    pass
+
+
 def _ocr_text(result) -> str:
     texts = getattr(result, "txts", None) or []
     return " ".join(
@@ -34,7 +38,12 @@ def read_mystery_box_count(frame, template_path: Path, ocr) -> int | None:
     if crop.size == 0:
         return None
 
-    result = ocr(crop, use_det=False, use_cls=False, use_rec=True)
+    try:
+        result = ocr(crop, use_det=False, use_cls=False, use_rec=True)
+    except Exception as exc:
+        raise MysteryBoxOCRError(
+            "Could not read mystery-box counter with RapidOCR."
+        ) from exc
     number = re.search(r"\d+", _ocr_text(result))
     return int(number.group()) if number else None
 
@@ -61,13 +70,14 @@ class MysteryBoxCapture:
         if self._ocr is None:
             try:
                 from rapidocr import RapidOCR
-            except ImportError as exc:
-                raise RuntimeError(
+
+                self._ocr = RapidOCR(params={"Global.log_level": "critical"})
+            except Exception as exc:
+                raise MysteryBoxOCRError(
                     "Mystery-box counting requires OCR dependencies. "
                     "Install them with: .venv\\Scripts\\python.exe -m pip "
                     "install -r requirements-ocr.txt"
                 ) from exc
-            self._ocr = RapidOCR(params={"Global.log_level": "critical"})
         return self._ocr
 
     def _read_count(self, frame) -> int | None:

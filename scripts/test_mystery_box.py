@@ -7,6 +7,7 @@ import cv2
 
 from avd_runner.mystery_box import (
     MysteryBoxCapture,
+    MysteryBoxOCRError,
     MysteryBoxTargetReached,
     read_mystery_box_count,
 )
@@ -36,6 +37,22 @@ assert read_mystery_box_count(
     fake_ocr,
 ) == 1
 assert seen_crops and seen_crops[0].size
+
+
+def broken_ocr(_crop, **_kwargs):
+    raise OSError("broken OCR runtime")
+
+
+try:
+    read_mystery_box_count(
+        frame,
+        REPO_ROOT / "assets" / "mystery_box.png",
+        broken_ocr,
+    )
+except MysteryBoxOCRError as exc:
+    assert "Could not read mystery-box counter" in str(exc)
+else:
+    raise AssertionError("OCR inference failures should use MysteryBoxOCRError")
 
 
 class FakeCapture:

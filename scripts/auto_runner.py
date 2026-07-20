@@ -17,7 +17,11 @@ from avd_runner.menu import (
     wait_for_any_template,
     wait_for_template,
 )
-from avd_runner.mystery_box import MysteryBoxCapture, MysteryBoxTargetReached
+from avd_runner.mystery_box import (
+    MysteryBoxCapture,
+    MysteryBoxOCRError,
+    MysteryBoxTargetReached,
+)
 
 
 ASSETS = REPO_ROOT / "assets"
@@ -360,6 +364,8 @@ def run_after_start(
         print(str(exc))
         quit_gameplay(ctx)
         completed = True
+    except MysteryBoxOCRError as exc:
+        raise RunnerError(str(exc)) from exc
     if not completed:
         raise RunnerError()
 
@@ -515,11 +521,14 @@ def clear_results(ctx: AutoRunnerContext) -> None:
 
 
 def quit_gameplay(ctx: AutoRunnerContext) -> None:
-    for target in (PAUSE_TARGET, QUIT_TARGET, QUIT_TARGET):
+    targets = (PAUSE_TARGET, QUIT_TARGET, QUIT_TARGET)
+    for index, target in enumerate(targets):
         if not tap_target(ctx, target):
             raise RunnerError(
                 f"Could not tap {target.path.name} while quitting gameplay."
             )
+        if index < len(targets) - 1:
+            wait(0.5)
 
 
 def run_once(ctx: AutoRunnerContext, args: argparse.Namespace) -> None:
