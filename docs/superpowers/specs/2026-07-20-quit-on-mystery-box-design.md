@@ -2,7 +2,7 @@
 
 ## Goal
 
-Add `--quit-on-collect-mystery-box N` to `scripts/auto_runner.py`. During gameplay, the runner reads the mystery-box count displayed beside `assets/mystery_box.png`. When the count equals `N`, it exits the active gameplay through `assets/pause.png`, `assets/quit.png`, and `assets/quit.png`, then continues through the existing result-screen cleanup and loop behavior.
+Add `--quit-on-collect-mystery-box N` to `scripts/auto_runner.py`. During gameplay, the runner reads the mystery-box count displayed beside `assets/mystery_box.png`. When the count equals `N`, it exits the active gameplay by tapping Pause at the logical coordinate `(1194, 37)`, then template-matching `assets/quit.png` twice before continuing through the existing result-screen cleanup and loop behavior.
 
 ## Command-Line Interface
 
@@ -26,13 +26,13 @@ OCR is initialized lazily, so runs without the option do not pay its startup cos
 
 The capture wrapper raises a private target-reached signal after two confirmed readings equal `N`. This unwinds the active gameplay runner without changing the three runner implementations.
 
-`run_after_start` catches that signal and taps, in order:
+`run_after_start` catches that signal and performs these actions consecutively, with no explicit waits between them:
 
-1. `assets/pause.png`
+1. Tap Pause at logical coordinate `(1194, 37)`. The device layer scales this coordinate for the active input resolution.
 2. `assets/quit.png`
 3. `assets/quit.png`
 
-Failure to find any required button follows the existing `RunnerError` failure path. After all three taps succeed, `run_after_start` returns normally. `run_once` then invokes the existing `clear_results` flow, and configured loop behavior remains unchanged.
+Failure to find either Quit button follows the existing `RunnerError` failure path. After the coordinate tap and both template taps complete, `run_after_start` returns normally. `run_once` then invokes the existing `clear_results` flow, and configured loop behavior remains unchanged.
 
 ## Testing
 
@@ -43,6 +43,6 @@ Tests will verify:
 - One matching reading does not trigger.
 - Two consecutive readings equal to the configured target trigger once.
 - Missing or unreadable counters do not trigger.
-- The post-trigger tap order is pause, quit, quit before normal result cleanup resumes.
+- The post-trigger action order is the Pause coordinate, Quit template, and Quit template, with no wait calls before normal result cleanup resumes.
 
 Existing gameplay-runner tests and the full script-based test suite will be run after implementation.
