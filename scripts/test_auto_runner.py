@@ -43,7 +43,7 @@ assert auto_runner.FAST_START_0_TARGET.attempts == 1
 assert auto_runner.RESULT_OK_TARGET.attempts == 120
 assert menu.SCREENSHOTS_DIR == auto_runner.REPO_ROOT / "screenshots"
 assert hasattr(auto_runner, "ACTIVATE_FAST_START_TEMPLATE")
-assert auto_runner.PAUSE_TARGET.path == auto_runner.ASSETS / "pause.png"
+assert auto_runner.PAUSE_XY == (1194, 37)
 assert auto_runner.QUIT_TARGET.path == auto_runner.ASSETS / "quit.png"
 
 # The final gameplay-start tap accepts both boosted and plain Play screens,
@@ -81,27 +81,28 @@ finally:
     auto_runner.wait_for_any_template = original_wait_for_any_template
     auto_runner.tap_target = original_tap_target
 
-# Reaching the configured collection target exits gameplay through the exact
-# pause -> quit -> confirm-quit template sequence.
+# Reaching the configured collection target taps Pause by coordinate, then
+# matches both Quit buttons without adding waits.
+original_device_tap = ctx.device.tap
 original_tap_target = auto_runner.tap_target
-original_wait = auto_runner.wait
 quit_sequence = []
 try:
+    ctx.device.tap = (
+        lambda x, y, label="": quit_sequence.append(("tap", x, y, label))
+        or (x, y)
+    )
     auto_runner.tap_target = (
         lambda _ctx, target, **_kwargs: quit_sequence.append(target.name) or True
     )
-    auto_runner.wait = lambda seconds: quit_sequence.append(("wait", seconds))
     auto_runner.quit_gameplay(ctx)
     assert quit_sequence == [
-        "Pause",
-        ("wait", 0.5),
+        ("tap", 1194, 37, "Pause"),
         "Quit",
-        ("wait", 0.5),
         "Quit",
     ]
 finally:
+    ctx.device.tap = original_device_tap
     auto_runner.tap_target = original_tap_target
-    auto_runner.wait = original_wait
 
 # Debug tap saving is scoped to the context and increments per run directory.
 with tempfile.TemporaryDirectory() as td:

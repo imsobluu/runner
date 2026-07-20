@@ -75,7 +75,7 @@ OPEN_ALL_MYSTERY_BOX_BUTTON_TEMPLATE = ASSETS / "open_all_mystery_box_button.png
 CONFIRM_MYSTERY_BOX_BUTTON_TEMPLATE = ASSETS / "confirm_mystery_box_button.png"
 LEVEL_UP_CONFIRM_BUTTON_TEMPLATE = ASSETS / "level_up_confirm_button.png"
 MYSTERY_BOX_TEMPLATE = ASSETS / "mystery_box.png"
-PAUSE_TEMPLATE = ASSETS / "pause.png"
+PAUSE_XY = (1194, 37)
 QUIT_TEMPLATE = ASSETS / "quit.png"
 LEVEL_RECORDINGS_DIR = REPO_ROOT / "recordings" / "episodes"
 
@@ -104,7 +104,6 @@ RESULT_OK_TARGET = TemplateTarget("Result OK", RESULT_OK_BUTTON_TEMPLATE, attemp
 OPEN_ALL_MYSTERY_BOX_TARGET = TemplateTarget("Open All Mystery Box", OPEN_ALL_MYSTERY_BOX_BUTTON_TEMPLATE)
 CONFIRM_MYSTERY_BOX_TARGET = TemplateTarget("Confirm Mystery Box", CONFIRM_MYSTERY_BOX_BUTTON_TEMPLATE)
 LEVEL_UP_CONFIRM_TARGET = TemplateTarget("Level Up Confirm", LEVEL_UP_CONFIRM_BUTTON_TEMPLATE)
-PAUSE_TARGET = TemplateTarget("Pause", PAUSE_TEMPLATE, attempts=120)
 QUIT_TARGET = TemplateTarget("Quit", QUIT_TEMPLATE, attempts=120)
 
 
@@ -521,14 +520,12 @@ def clear_results(ctx: AutoRunnerContext) -> None:
 
 
 def quit_gameplay(ctx: AutoRunnerContext) -> None:
-    targets = (PAUSE_TARGET, QUIT_TARGET, QUIT_TARGET)
-    for index, target in enumerate(targets):
+    ctx.device.tap(*PAUSE_XY, label="Pause")
+    for target in (QUIT_TARGET, QUIT_TARGET):
         if not tap_target(ctx, target):
             raise RunnerError(
                 f"Could not tap {target.path.name} while quitting gameplay."
             )
-        if index < len(targets) - 1:
-            wait(0.5)
 
 
 def run_once(ctx: AutoRunnerContext, args: argparse.Namespace) -> None:
