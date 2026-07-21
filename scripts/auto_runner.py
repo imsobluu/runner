@@ -51,7 +51,6 @@ class TemplateTarget:
 
 
 PLAY_BUTTON_TEMPLATE = ASSETS / "play_button.png"
-PLAY_WITH_DOUBLE_COINS_TEMPLATE = ASSETS / "play_with_double_coins.png"
 RANDOM_BOOST_TEMPLATE = ASSETS / "random_boost.png"
 RANDOM_BOOST_SELECTED_TEMPLATE = ASSETS / "random_boost_selected.png"
 MULTI_BUTTON_TEMPLATE = ASSETS / "multi_button.png"
@@ -77,6 +76,7 @@ OPEN_ALL_MYSTERY_BOX_BUTTON_TEMPLATE = ASSETS / "open_all_mystery_box_button.png
 CONFIRM_MYSTERY_BOX_BUTTON_TEMPLATE = ASSETS / "confirm_mystery_box_button.png"
 LEVEL_UP_CONFIRM_BUTTON_TEMPLATE = ASSETS / "level_up_confirm_button.png"
 MYSTERY_BOX_TEMPLATE = ASSETS / "mystery_box.png"
+GAMEPLAY_PLAY_XY = (920, 616)
 PAUSE_XY = (1194, 37)
 QUIT_TEMPLATE = ASSETS / "quit.png"
 LEVEL_RECORDINGS_DIR = REPO_ROOT / "recordings" / "episodes"
@@ -100,11 +100,6 @@ RANDOM_BOOSTS = {
 }
 
 PLAY_TARGET = TemplateTarget("Play", PLAY_BUTTON_TEMPLATE)
-PLAY_WITH_DOUBLE_COINS_TARGET = TemplateTarget(
-    "Play with Double Coins",
-    PLAY_WITH_DOUBLE_COINS_TEMPLATE,
-    verify_gone=True,
-)
 RANDOM_BOOST_TARGET = TemplateTarget("Random Boost", RANDOM_BOOST_TEMPLATE)
 MULTI_TARGET = TemplateTarget("Multi", MULTI_BUTTON_TEMPLATE)
 MULTI_BUY_TARGET = TemplateTarget("Multi Buy", MULTI_BUY_BUTTON_TEMPLATE)
@@ -152,23 +147,8 @@ def tap_play_button(
     return tap_target(ctx, PLAY_TARGET, attempts=attempts)
 
 
-def tap_play_with_double_coins_button(
-    ctx: AutoRunnerContext,
-    attempts: int = 5,
-) -> bool:
-    # The purchase-complete modal from a boost buy can swallow this tap without
-    # covering the button; re-tap until the button actually goes.
-    targets = (PLAY_WITH_DOUBLE_COINS_TARGET, PLAY_TARGET)
-    seen = wait_for_any_template(
-        ctx,
-        [(target.name, target.path) for target in targets],
-        CAPTCHA_BANNER_TEMPLATE,
-        attempts=attempts,
-    )
-    for target in targets:
-        if target.name == seen:
-            return tap_target(ctx, target, attempts=attempts)
-    return False
+def tap_gameplay_play_button(ctx: AutoRunnerContext) -> None:
+    ctx.device.tap(*GAMEPLAY_PLAY_XY, label="Play")
 
 
 def tap_random_boost_button(
@@ -341,8 +321,7 @@ def run_after_start(
     fast_start_template = ACTIVATE_FAST_START_TEMPLATE if fast_start else None
 
     # The gameplay drivers take over after the boost screen's final Play button.
-    if not tap_play_with_double_coins_button(ctx):
-        raise RunnerError()
+    tap_gameplay_play_button(ctx)
 
     runner_ctx = ctx
     if quit_on_collect_mystery_box is not None:

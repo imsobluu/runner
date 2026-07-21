@@ -228,7 +228,6 @@ finally:
     auto_runner.tap_multi_buy_button = original_tap_multi_buy_button
 
 # Target definitions preserve behavior-sensitive retry policy.
-assert auto_runner.PLAY_WITH_DOUBLE_COINS_TARGET.verify_gone
 assert auto_runner.FAST_START_0_TARGET.threshold == 0.98
 assert auto_runner.FAST_START_0_TARGET.attempts == 1
 assert auto_runner.RESULT_OK_TARGET.attempts == 120
@@ -237,40 +236,19 @@ assert hasattr(auto_runner, "ACTIVATE_FAST_START_TEMPLATE")
 assert auto_runner.PAUSE_XY == (1194, 37)
 assert auto_runner.QUIT_TARGET.path == auto_runner.ASSETS / "quit.png"
 
-# The final gameplay-start tap accepts both boosted and plain Play screens,
-# preferring the more specific Double Coins template when both could match.
-original_wait_for_any_template = auto_runner.wait_for_any_template
-original_tap_target = auto_runner.tap_target
-lookups = []
-tapped = []
-expected_lookup = [
-    (auto_runner.PLAY_WITH_DOUBLE_COINS_TARGET.name, auto_runner.PLAY_WITH_DOUBLE_COINS_TARGET.path),
-    (auto_runner.PLAY_TARGET.name, auto_runner.PLAY_TARGET.path),
-]
+# The final gameplay-start action taps the fixed Play-button coordinate.
+assert auto_runner.GAMEPLAY_PLAY_XY == (920, 616)
+original_device_tap = ctx.device.tap
+gameplay_play_taps = []
 try:
-    for seen, expected_target in (
-        (auto_runner.PLAY_WITH_DOUBLE_COINS_TARGET.name, auto_runner.PLAY_WITH_DOUBLE_COINS_TARGET),
-        (auto_runner.PLAY_TARGET.name, auto_runner.PLAY_TARGET),
-    ):
-        lookups.clear()
-        tapped.clear()
-        auto_runner.wait_for_any_template = (
-            lambda _ctx, targets, _banner, **_kwargs: lookups.append(targets) or seen
-        )
-        auto_runner.tap_target = (
-            lambda _ctx, target, **_kwargs: tapped.append(target) or True
-        )
-        assert auto_runner.tap_play_with_double_coins_button(ctx)
-        assert lookups == [expected_lookup]
-        assert tapped == [expected_target]
-
-    tapped.clear()
-    auto_runner.wait_for_any_template = lambda _ctx, _targets, _banner, **_kwargs: None
-    assert not auto_runner.tap_play_with_double_coins_button(ctx)
-    assert tapped == []
+    ctx.device.tap = (
+        lambda x, y, label="": gameplay_play_taps.append((x, y, label))
+        or (x, y)
+    )
+    assert auto_runner.tap_gameplay_play_button(ctx) is None
+    assert gameplay_play_taps == [(920, 616, "Play")]
 finally:
-    auto_runner.wait_for_any_template = original_wait_for_any_template
-    auto_runner.tap_target = original_tap_target
+    ctx.device.tap = original_device_tap
 
 # Reaching the configured collection target taps Pause by coordinate, then
 # matches both Quit buttons without adding waits.
@@ -408,10 +386,10 @@ finally:
 
 # run_after_start must keep validating levels recordings before the final Play
 # tap, so a bad episode does not spend a run.
-original_tap_play_with_double_coins_button = auto_runner.tap_play_with_double_coins_button
+original_tap_gameplay_play_button = auto_runner.tap_gameplay_play_button
 tap_calls = []
 try:
-    auto_runner.tap_play_with_double_coins_button = lambda _ctx: tap_calls.append("tap") or True
+    auto_runner.tap_gameplay_play_button = lambda _ctx: tap_calls.append("tap")
     try:
         auto_runner.run_after_start(ctx, "levels", False, True, "definitely_missing_episode")
     except auto_runner.RunnerError as exc:
@@ -420,12 +398,12 @@ try:
         raise AssertionError("missing episode should stop run_after_start")
     assert tap_calls == []
 finally:
-    auto_runner.tap_play_with_double_coins_button = original_tap_play_with_double_coins_button
+    auto_runner.tap_gameplay_play_button = original_tap_gameplay_play_button
 
 # --fast-start maps to an optional gameplay-runner template without changing
 # the existing Cookie Relay template.
 original_build_gameplay_runner = auto_runner.build_gameplay_runner
-original_tap_play_with_double_coins_button = auto_runner.tap_play_with_double_coins_button
+original_tap_gameplay_play_button = auto_runner.tap_gameplay_play_button
 fast_start_templates = []
 
 class FakeGameplayRunner:
@@ -433,7 +411,7 @@ class FakeGameplayRunner:
         return True
 
 try:
-    auto_runner.tap_play_with_double_coins_button = lambda _ctx: True
+    auto_runner.tap_gameplay_play_button = lambda _ctx: None
     auto_runner.build_gameplay_runner = (
         lambda _ctx, _mode, _relay, fast_start, _episode: (
             fast_start_templates.append(fast_start) or FakeGameplayRunner()
@@ -444,7 +422,7 @@ try:
     assert fast_start_templates == [None, auto_runner.ACTIVATE_FAST_START_TEMPLATE]
 finally:
     auto_runner.build_gameplay_runner = original_build_gameplay_runner
-    auto_runner.tap_play_with_double_coins_button = original_tap_play_with_double_coins_button
+    auto_runner.tap_gameplay_play_button = original_tap_gameplay_play_button
 
 # A mystery-box target signal runs the quit sequence and then returns normally
 # so the caller can continue with result cleanup.
@@ -453,13 +431,13 @@ class TargetRunner:
         raise auto_runner.MysteryBoxTargetReached(2)
 
 
-original_tap_play_with_double_coins_button = auto_runner.tap_play_with_double_coins_button
+original_tap_gameplay_play_button = auto_runner.tap_gameplay_play_button
 original_quit_gameplay = auto_runner.quit_gameplay
 original_build_gameplay_runner = auto_runner.build_gameplay_runner
 quit_calls = []
 captures = []
 try:
-    auto_runner.tap_play_with_double_coins_button = lambda _ctx: True
+    auto_runner.tap_gameplay_play_button = lambda _ctx: None
     auto_runner.quit_gameplay = lambda _ctx: quit_calls.append("quit")
     auto_runner.build_gameplay_runner = (
         lambda runner_ctx, _mode, _relay, _fast_start, _episode: (
@@ -470,7 +448,7 @@ try:
     assert isinstance(captures[0], auto_runner.MysteryBoxCapture)
     assert quit_calls == ["quit"]
 finally:
-    auto_runner.tap_play_with_double_coins_button = original_tap_play_with_double_coins_button
+    auto_runner.tap_gameplay_play_button = original_tap_gameplay_play_button
     auto_runner.quit_gameplay = original_quit_gameplay
     auto_runner.build_gameplay_runner = original_build_gameplay_runner
 
@@ -481,10 +459,10 @@ class BrokenOCRRunner:
         raise auto_runner.MysteryBoxOCRError("OCR unavailable")
 
 
-original_tap_play_with_double_coins_button = auto_runner.tap_play_with_double_coins_button
+original_tap_gameplay_play_button = auto_runner.tap_gameplay_play_button
 original_build_gameplay_runner = auto_runner.build_gameplay_runner
 try:
-    auto_runner.tap_play_with_double_coins_button = lambda _ctx: True
+    auto_runner.tap_gameplay_play_button = lambda _ctx: None
     auto_runner.build_gameplay_runner = (
         lambda _ctx, _mode, _relay, _fast_start, _episode: BrokenOCRRunner()
     )
@@ -495,7 +473,7 @@ try:
     else:
         raise AssertionError("OCR errors should be translated to RunnerError")
 finally:
-    auto_runner.tap_play_with_double_coins_button = original_tap_play_with_double_coins_button
+    auto_runner.tap_gameplay_play_button = original_tap_gameplay_play_button
     auto_runner.build_gameplay_runner = original_build_gameplay_runner
 
 # The optional relic claim runs before the initial Play tap.
