@@ -8,10 +8,11 @@ from collections.abc import Sequence
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from avd_runner import AvdDevice, wait
+from avd_runner import AvdDevice, find_template, wait
 from avd_runner.debug_session import DebugSession
 from avd_runner.menu import (
     MenuAutomationError,
+    debug_save_tap,
     is_toggle_selected,
     tap_template,
     wait_for_any_template,
@@ -54,8 +55,8 @@ RANDOM_BOOST_TEMPLATE = ASSETS / "random_boost.png"
 RANDOM_BOOST_SELECTED_TEMPLATE = ASSETS / "random_boost_selected.png"
 MULTI_BUTTON_TEMPLATE = ASSETS / "multi_button.png"
 MULTI_BUY_BUTTON_TEMPLATE = ASSETS / "multi_buy_button.png"
-DOUBLE_COINS_TEMPLATE = ASSETS / "double_coins.png"
-DOUBLE_COINS_SELECTED_TEMPLATE = ASSETS / "double_coins_selected.png"
+CHECKBOX_TEMPLATE = ASSETS / "checkbox.png"
+CHECKMARK_TEMPLATE = ASSETS / "checkmark.png"
 DOUBLE_COINS_BANNER_TEMPLATE = ASSETS / "double_coins_banner.png"
 FAST_START_0_TEMPLATE = ASSETS / "fast_start_0.png"
 COOKIE_RELAY_0_TEMPLATE = ASSETS / "cookie_relay_0.png"
@@ -78,6 +79,24 @@ MYSTERY_BOX_TEMPLATE = ASSETS / "mystery_box.png"
 PAUSE_XY = (1194, 37)
 QUIT_TEMPLATE = ASSETS / "quit.png"
 LEVEL_RECORDINGS_DIR = REPO_ROOT / "recordings" / "episodes"
+REFERENCE_SIZE = (1280, 720)
+CHECKBOX_HALF_SIZE = (28, 24)
+CHECKBOX_READY_SCORE = 0.80
+CHECKBOX_SCORE_MARGIN = 0.05
+
+RANDOM_BOOSTS = {
+    "double-coins": ("Double Coins", (284, 175)),
+    "score-bonus": ("15% score bonus", (665, 175)),
+    "hp-drain-reduction": ("-15% HP drain", (284, 224)),
+    "revive": ("Revive once with 80 HP", (665, 224)),
+    "crush-chance": ("70% Crush Chance", (284, 274)),
+    "base-speed": ("+17% base speed", (665, 274)),
+    "gold-coin-magic": ("Gold Coin Magic", (284, 323)),
+    "collision-damage-reduction": ("-30% collision damage", (665, 323)),
+    "potion-hp": ("+20% HP from potions", (284, 373)),
+    "magnetic-aura": ("Magnetic Aura", (665, 373)),
+    "pit-lifts": ("2 Pit Lifts", (284, 423)),
+}
 
 PLAY_TARGET = TemplateTarget("Play", PLAY_BUTTON_TEMPLATE)
 PLAY_WITH_DOUBLE_COINS_TARGET = TemplateTarget(
@@ -88,7 +107,6 @@ PLAY_WITH_DOUBLE_COINS_TARGET = TemplateTarget(
 RANDOM_BOOST_TARGET = TemplateTarget("Random Boost", RANDOM_BOOST_TEMPLATE)
 MULTI_TARGET = TemplateTarget("Multi", MULTI_BUTTON_TEMPLATE)
 MULTI_BUY_TARGET = TemplateTarget("Multi Buy", MULTI_BUY_BUTTON_TEMPLATE)
-DOUBLE_COINS_TARGET = TemplateTarget("Double Coins", DOUBLE_COINS_TEMPLATE)
 FAST_START_0_TARGET = TemplateTarget("Fast Start 0", FAST_START_0_TEMPLATE, threshold=0.99, attempts=1)
 COOKIE_RELAY_0_TARGET = TemplateTarget("Cookie Relay 0", COOKIE_RELAY_0_TEMPLATE, threshold=0.98, attempts=1)
 DOUBLE_XP_TARGET = TemplateTarget("Double XP", DOUBLE_XP_TEMPLATE, attempts=1)
@@ -180,20 +198,6 @@ def tap_multi_buy_button(
     save_debug: bool = False,
 ) -> bool:
     return tap_target(ctx, MULTI_BUY_TARGET, attempts=attempts, save_debug=save_debug)
-
-
-def tap_double_coins_button(
-    ctx: AutoRunnerContext,
-    attempts: int = 5,
-    save_debug: bool = False,
-) -> bool:
-    if is_toggle_selected(
-        ctx, "Double Coins Selected", DOUBLE_COINS_SELECTED_TEMPLATE, DOUBLE_COINS_TEMPLATE,
-        CAPTCHA_BANNER_TEMPLATE,
-    ):
-        return True
-
-    return tap_target(ctx, DOUBLE_COINS_TARGET, attempts=attempts, save_debug=save_debug)
 
 
 def tap_fast_start_0_if_visible(ctx: AutoRunnerContext) -> bool:
@@ -369,6 +373,61 @@ def run_after_start(
         raise RunnerError()
 
 
+def _read_menu_key() -> str:
+    import msvcrt
+
+    key = msvcrt.getwch()
+    if key in ("\x00", "\xe0"):
+        return {"H": "up", "P": "down"}.get(msvcrt.getwch(), "")
+    return {
+        "\r": "\r",
+        "\x08": "backspace",
+        "\x1b": "escape",
+    }.get(key, key)
+
+
+def select_random_boost(read_key=None, write=None) -> str | None:
+    read_key = _read_menu_key if read_key is None else read_key
+    write = sys.stdout.write if write is None else write
+    boosts = list(RANDOM_BOOSTS.items())
+    selected = 0
+    digits = ""
+    rendered = False
+
+    while True:
+        if rendered:
+            write(f"\x1b[{len(boosts) + 2}F")
+        write("Select one Random Boost (arrows/numbers, Enter confirms):\n")
+        for number, (_slug, (label, _xy)) in enumerate(boosts, 1):
+            marker = ">" if number - 1 == selected else " "
+            write(f"{marker} {number:2}. {label}\n")
+        write("Esc cancels\n")
+        rendered = True
+
+        key = read_key()
+        if key == "up":
+            selected = max(0, selected - 1)
+            digits = ""
+        elif key == "down":
+            selected = min(len(boosts) - 1, selected + 1)
+            digits = ""
+        elif key == "backspace":
+            digits = ""
+        elif key == "escape":
+            return None
+        elif key == "\r":
+            return boosts[selected][0]
+        elif key.isdigit():
+            candidate = digits + key
+            number = int(candidate)
+            if 1 <= number <= len(boosts):
+                digits = candidate
+                selected = number - 1
+            elif key != "0":
+                digits = key
+                selected = int(key) - 1
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the Cookie Run setup bot.")
     parser.add_argument(
@@ -422,9 +481,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Skip top row boost checks.",
     )
     parser.add_argument(
-        "--skip-random-boost",
-        action="store_true",
-        help="Skip Random Boost, Multi, Double Coins, and Multi Buy setup.",
+        "--random-boost",
+        nargs="?",
+        const="",
+        metavar="BOOST",
+        help="Select a Random Boost by kebab-case name; omit BOOST for an interactive menu.",
     )
     parser.add_argument(
         "--quit-on-collect-mystery-box",
@@ -444,6 +505,17 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "taps drawn on the captured frames (menu, levels, and reactive).",
     )
     args = parser.parse_args(argv)
+    if args.random_boost == "":
+        try:
+            args.random_boost = select_random_boost()
+        except (EOFError, OSError, ImportError):
+            parser.error("Interactive Random Boost selection needs a Windows console")
+        if args.random_boost is None:
+            parser.error("Random Boost selection cancelled")
+    elif args.random_boost is not None and args.random_boost not in RANDOM_BOOSTS:
+        parser.error(
+            "--random-boost must be one of: " + ", ".join(RANDOM_BOOSTS)
+        )
     if args.loop_count is not None and args.loop_count < 1:
         parser.error("--loop-count must be at least 1")
     if (
@@ -470,33 +542,91 @@ def buy_boost_if_available(ctx: AutoRunnerContext, select) -> None:
         raise RunnerError()
 
 
-def ensure_double_coins_setup(ctx: AutoRunnerContext) -> None:
+def _checkbox_is_checked(crop) -> bool:
+    checked = find_template(crop, CHECKMARK_TEMPLATE, threshold=-1.0)
+    empty = find_template(crop, CHECKBOX_TEMPLATE, threshold=-1.0)
+    checked_score = checked.score if checked else 0.0
+    empty_score = empty.score if empty else 0.0
+    if (
+        max(checked_score, empty_score) < CHECKBOX_READY_SCORE
+        or abs(checked_score - empty_score) < CHECKBOX_SCORE_MARGIN
+    ):
+        raise RunnerError(
+            f"Ambiguous boost checkbox: checked={checked_score:.3f} "
+            f"empty={empty_score:.3f}"
+        )
+    return checked_score > empty_score
+
+
+def checked_random_boosts(screen) -> set[str]:
+    height, width = screen.shape[:2]
+    sx = width / REFERENCE_SIZE[0]
+    sy = height / REFERENCE_SIZE[1]
+    half_width, half_height = CHECKBOX_HALF_SIZE
+    checked = set()
+    for slug, (_label, (x, y)) in RANDOM_BOOSTS.items():
+        x1 = round((x - half_width) * sx)
+        y1 = round((y - half_height) * sy)
+        x2 = round((x + half_width) * sx)
+        y2 = round((y + half_height) * sy)
+        if _checkbox_is_checked(screen[y1:y2, x1:x2]):
+            checked.add(slug)
+    return checked
+
+
+def random_boosts_to_toggle(checked: set[str], desired: str) -> list[str]:
+    return [
+        slug
+        for slug in RANDOM_BOOSTS
+        if (slug == desired) != (slug in checked)
+    ]
+
+
+def reconcile_random_boost_checkboxes(
+    ctx: AutoRunnerContext,
+    desired: str,
+) -> None:
+    screen = ctx.capture.grab()
+    for slug in random_boosts_to_toggle(checked_random_boosts(screen), desired):
+        label, (x, y) = RANDOM_BOOSTS[slug]
+        tx, ty = ctx.device.tap(x, y, label=label)
+        debug_save_tap(ctx, label, screen, tx, ty)
+        wait(0.2)
+    final_checked = checked_random_boosts(ctx.capture.grab())
+    if final_checked != {desired}:
+        raise RunnerError(
+            "Random Boost checkbox verification failed: "
+            + ", ".join(sorted(final_checked))
+        )
+
+
+def ensure_random_boost_setup(ctx: AutoRunnerContext, desired: str) -> None:
     seen = wait_for_any_template(
         ctx,
         [
-            ("Double Coins Banner", DOUBLE_COINS_BANNER_TEMPLATE),
             ("Random Boost Selected", RANDOM_BOOST_SELECTED_TEMPLATE),
             ("Random Boost", RANDOM_BOOST_TEMPLATE),
         ],
         CAPTCHA_BANNER_TEMPLATE,
     )
     if seen is None:
-        print("Neither the boost-selection nor double-coins screen appeared.")
-        raise RunnerError()
-
-    if seen == "Double Coins Banner":
-        return
-
+        raise RunnerError("The boost-selection screen did not appear.")
     if not tap_random_boost_button(ctx):
-        raise RunnerError()
+        raise RunnerError("Could not select Random Boost.")
     if not tap_multi_button(ctx):
-        raise RunnerError()
-    if not tap_double_coins_button(ctx):
-        raise RunnerError()
+        raise RunnerError("Could not open Multi selection.")
+    reconcile_random_boost_checkboxes(ctx, desired)
     if not tap_multi_buy_button(ctx):
-        raise RunnerError()
-    if not wait_for_template(ctx, "Double Coins Banner", DOUBLE_COINS_BANNER_TEMPLATE, CAPTCHA_BANNER_TEMPLATE):
-        raise RunnerError()
+        raise RunnerError("Could not tap Multi-Buy.")
+    if wait_for_any_template(
+        ctx,
+        [
+            ("Random Boost Selected", RANDOM_BOOST_SELECTED_TEMPLATE),
+            ("Random Boost", RANDOM_BOOST_TEMPLATE),
+        ],
+        CAPTCHA_BANNER_TEMPLATE,
+    ) is None:
+        raise RunnerError("Boost store did not reappear after Multi-Buy.")
 
 
 def buy_optional_boosts(ctx: AutoRunnerContext, skip_top_row_boosts: bool) -> None:
@@ -533,8 +663,11 @@ def run_once(ctx: AutoRunnerContext, args: argparse.Namespace) -> None:
     if not tap_play_button(ctx):
         raise RunnerError()
 
-    if not args.skip_random_boost:
-        ensure_double_coins_setup(ctx)
+    if args.random_boost is None:
+        wait(0.5)
+    else:
+        ensure_random_boost_setup(ctx, args.random_boost)
+
     buy_optional_boosts(ctx, args.skip_top_row_boosts)
     run_after_start(
         ctx,

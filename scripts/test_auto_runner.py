@@ -8,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
+import cv2
 
 from avd_runner import AvdDevice
 from avd_runner.debug_session import DebugSession
@@ -35,6 +36,163 @@ ctx = auto_runner.AutoRunnerContext(
 # touch WGC/ADB.
 assert menu.take_screenshot(ctx) is frame
 assert not menu.solve_captcha_if_present(ctx, frame, auto_runner.CAPTCHA_BANNER_TEMPLATE)
+
+
+def choose_boost(keys):
+    pressed = iter(keys)
+    output = []
+    return auto_runner.select_random_boost(
+        read_key=lambda: next(pressed),
+        write=output.append,
+    )
+
+
+assert choose_boost(["down", "\r"]) == "score-bonus"
+assert choose_boost(["down", "up", "\r"]) == "double-coins"
+assert choose_boost(["1", "0", "\r"]) == "magnetic-aura"
+assert choose_boost(["1", "1", "\r"]) == "pit-lifts"
+assert choose_boost(["9", "backspace", "2", "\r"]) == "score-bonus"
+assert choose_boost(["escape"]) is None
+
+assert auto_runner.parse_args([]).random_boost is None
+assert (
+    auto_runner.parse_args(["--random-boost", "magnetic-aura"]).random_boost
+    == "magnetic-aura"
+)
+
+original_select_random_boost = auto_runner.select_random_boost
+try:
+    auto_runner.select_random_boost = lambda: "pit-lifts"
+    assert auto_runner.parse_args(["--random-boost"]).random_boost == "pit-lifts"
+finally:
+    auto_runner.select_random_boost = original_select_random_boost
+
+try:
+    with redirect_stderr(StringIO()):
+        auto_runner.parse_args(["--random-boost", "unknown"])
+except SystemExit:
+    pass
+else:
+    raise AssertionError("unknown random boost should be rejected")
+
+checked_template = cv2.imread(str(auto_runner.CHECKMARK_TEMPLATE))
+empty_template = cv2.imread(str(auto_runner.CHECKBOX_TEMPLATE))
+assert checked_template is not None
+assert empty_template is not None
+checked_crop = np.zeros((48, 56, 3), dtype=np.uint8)
+empty_crop = np.zeros((48, 56, 3), dtype=np.uint8)
+checked_crop[3:44, 6:48] = checked_template
+empty_crop[4:43, 6:49] = empty_template
+assert auto_runner._checkbox_is_checked(checked_crop)
+assert not auto_runner._checkbox_is_checked(empty_crop)
+
+assert auto_runner.random_boosts_to_toggle(
+    {"double-coins", "magnetic-aura"},
+    "magnetic-aura",
+) == ["double-coins"]
+assert auto_runner.random_boosts_to_toggle(set(), "pit-lifts") == ["pit-lifts"]
+assert auto_runner.random_boosts_to_toggle(
+    {"magnetic-aura"},
+    "magnetic-aura",
+) == []
+
+
+class TapDevice:
+    def __init__(self):
+        self.taps = []
+
+    def tap(self, x, y, label=""):
+        self.taps.append((x, y, label))
+        return x, y
+
+
+reconcile_ctx = auto_runner.AutoRunnerContext(
+    device=TapDevice(),
+    capture=FakeCapture(frame),
+    debug=DebugSession(),
+    captcha_enabled=False,
+)
+states = iter([
+    {"double-coins", "magnetic-aura"},
+    {"magnetic-aura"},
+])
+original_checked_random_boosts = auto_runner.checked_random_boosts
+try:
+    auto_runner.checked_random_boosts = lambda _screen: next(states)
+    auto_runner.reconcile_random_boost_checkboxes(reconcile_ctx, "magnetic-aura")
+finally:
+    auto_runner.checked_random_boosts = original_checked_random_boosts
+assert reconcile_ctx.device.taps == [(284, 175, "Double Coins")]
+
+bad_ctx = auto_runner.AutoRunnerContext(
+    device=TapDevice(),
+    capture=FakeCapture(frame),
+    debug=DebugSession(),
+    captcha_enabled=False,
+)
+bad_states = iter([
+    {"double-coins"},
+    {"double-coins"},
+])
+try:
+    auto_runner.checked_random_boosts = lambda _screen: next(bad_states)
+    try:
+        auto_runner.reconcile_random_boost_checkboxes(bad_ctx, "magnetic-aura")
+    except auto_runner.RunnerError:
+        pass
+    else:
+        raise AssertionError("incorrect final checkbox set should fail")
+finally:
+    auto_runner.checked_random_boosts = original_checked_random_boosts
+
+try:
+    auto_runner._checkbox_is_checked(np.zeros((48, 56, 3), dtype=np.uint8))
+except auto_runner.RunnerError:
+    pass
+else:
+    raise AssertionError("ambiguous checkbox image should fail")
+
+setup_order = []
+original_wait_for_any_template = auto_runner.wait_for_any_template
+original_tap_random_boost_button = auto_runner.tap_random_boost_button
+original_tap_multi_button = auto_runner.tap_multi_button
+original_reconcile = auto_runner.reconcile_random_boost_checkboxes
+original_tap_multi_buy_button = auto_runner.tap_multi_buy_button
+try:
+    screens = iter(["Random Boost", "Random Boost Selected"])
+    auto_runner.wait_for_any_template = lambda *_args, **_kwargs: next(screens)
+    auto_runner.tap_random_boost_button = lambda _ctx: setup_order.append("random") or True
+    auto_runner.tap_multi_button = lambda _ctx: setup_order.append("multi") or True
+    auto_runner.reconcile_random_boost_checkboxes = (
+        lambda _ctx, boost: setup_order.append(("reconcile", boost))
+    )
+    auto_runner.tap_multi_buy_button = lambda _ctx: setup_order.append("buy") or True
+    auto_runner.ensure_random_boost_setup(ctx, "magnetic-aura")
+    assert setup_order == [
+        "random",
+        "multi",
+        ("reconcile", "magnetic-aura"),
+        "buy",
+    ]
+
+    setup_order.clear()
+    screens = iter(["Random Boost"])
+    auto_runner.reconcile_random_boost_checkboxes = (
+        lambda _ctx, _boost: (_ for _ in ()).throw(auto_runner.RunnerError())
+    )
+    try:
+        auto_runner.ensure_random_boost_setup(ctx, "magnetic-aura")
+    except auto_runner.RunnerError:
+        pass
+    else:
+        raise AssertionError("reconciliation failure should abort setup")
+    assert "buy" not in setup_order
+finally:
+    auto_runner.wait_for_any_template = original_wait_for_any_template
+    auto_runner.tap_random_boost_button = original_tap_random_boost_button
+    auto_runner.tap_multi_button = original_tap_multi_button
+    auto_runner.reconcile_random_boost_checkboxes = original_reconcile
+    auto_runner.tap_multi_buy_button = original_tap_multi_buy_button
 
 # Target definitions preserve behavior-sensitive retry policy.
 assert auto_runner.PLAY_WITH_DOUBLE_COINS_TARGET.verify_gone
@@ -310,7 +468,12 @@ finally:
 # The optional relic claim runs before the initial Play tap.
 original_tap_play_button = auto_runner.tap_play_button
 original_claim_relic_if_alert = auto_runner.claim_relic_if_alert
-original_ensure_double_coins_setup = auto_runner.ensure_double_coins_setup
+had_ensure_random_boost_setup = hasattr(auto_runner, "ensure_random_boost_setup")
+original_ensure_random_boost_setup = getattr(
+    auto_runner,
+    "ensure_random_boost_setup",
+    None,
+)
 original_buy_optional_boosts = auto_runner.buy_optional_boosts
 original_run_after_start = auto_runner.run_after_start
 original_clear_results = auto_runner.clear_results
@@ -318,7 +481,9 @@ order = []
 try:
     auto_runner.claim_relic_if_alert = lambda _ctx: order.append("relic") or False
     auto_runner.tap_play_button = lambda _ctx: order.append("play") or True
-    auto_runner.ensure_double_coins_setup = lambda _ctx: order.append("double_coins")
+    auto_runner.ensure_random_boost_setup = (
+        lambda _ctx, boost: order.append(("random_boost", boost))
+    )
     auto_runner.buy_optional_boosts = lambda _ctx, _skip: order.append("boosts")
     auto_runner.run_after_start = (
         lambda _ctx, _mode, _no_relay, fast_start, _episode, mystery_target: order.append(
@@ -331,7 +496,6 @@ try:
     assert order == [
         "relic",
         "play",
-        "double_coins",
         "boosts",
         ("gameplay", False, None),
         "clear",
@@ -342,28 +506,33 @@ try:
     assert order == [
         "relic",
         "play",
-        "double_coins",
         "boosts",
         ("gameplay", True, None),
         "clear",
     ]
 
     order.clear()
-    skip_args = types.SimpleNamespace(
-        mode="none",
-        no_cookie_relay=False,
-        episode=None,
-        skip_top_row_boosts=False,
-        skip_random_boost=True,
-        fast_start=False,
-        quit_on_collect_mystery_box=None,
+    auto_runner.run_once(
+        ctx,
+        auto_runner.parse_args(
+            ["--mode", "none", "--random-boost", "magnetic-aura"]
+        ),
     )
-    auto_runner.run_once(ctx, skip_args)
-    assert order == ["relic", "play", "boosts", ("gameplay", False, None), "clear"]
+    assert order == [
+        "relic",
+        "play",
+        ("random_boost", "magnetic-aura"),
+        "boosts",
+        ("gameplay", False, None),
+        "clear",
+    ]
 finally:
     auto_runner.tap_play_button = original_tap_play_button
     auto_runner.claim_relic_if_alert = original_claim_relic_if_alert
-    auto_runner.ensure_double_coins_setup = original_ensure_double_coins_setup
+    if had_ensure_random_boost_setup:
+        auto_runner.ensure_random_boost_setup = original_ensure_random_boost_setup
+    else:
+        del auto_runner.ensure_random_boost_setup
     auto_runner.buy_optional_boosts = original_buy_optional_boosts
     auto_runner.run_after_start = original_run_after_start
     auto_runner.clear_results = original_clear_results
@@ -402,9 +571,7 @@ else:
     raise AssertionError("mystery-box target 0 should be rejected")
 
 default_args = auto_runner.parse_args([])
-skip_args = auto_runner.parse_args(["--skip-random-boost"])
-assert vars(default_args).get("skip_random_boost") is False
-assert vars(skip_args).get("skip_random_boost") is True
+assert default_args.random_boost is None
 
 fast_args = auto_runner.parse_args(["--fast-start"])
 assert vars(default_args).get("fast_start") is False

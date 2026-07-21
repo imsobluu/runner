@@ -109,9 +109,7 @@ mid-run; `reactive` and `none` modes tap it by default),
 `--fast-start` (tap Activate Fast Start once when it appears during gameplay;
 recorded level replay continues),
 `--skip-top-row-boosts` (don't buy the Double XP / Power Jelly / HP Extension
-boosts during setup), `--skip-random-boost` (skip the Random Boost / Multi /
-Double Coins / Multi Buy setup; the run-start step accepts either the Double
-Coins or plain Play button), `--debug` (save the frame of every menu and captcha-card
+boosts during setup), `--debug` (save the frame of every menu and captcha-card
 tap, with a red dot at the tap point and its coordinates, to
 `debug/<session id>/runN/<NN>_<name>.png`; gameplay jump/slide taps are
 deliberately not captured to keep their timing untouched), `--debug-window`
@@ -119,6 +117,22 @@ deliberately not captured to keep their timing untouched), `--debug-window`
 they fire, across menu, levels, and reactive phases: menu button matches and
 taps, the levels progress-marker box with replayed taps, and the
 reactive lookahead region with the detected obstacle box and score).
+
+Random Boost setup is opt-in. With no `--random-boost` flag, the runner skips
+Random Boost, Multi, checkbox selection, and Multi-Buy. Select directly for
+unattended runs:
+
+```powershell
+.venv\Scripts\python.exe -u scripts\auto_runner.py --random-boost magnetic-aura
+```
+
+Pass `--random-boost` without a value for a single-selection terminal menu.
+Use Up/Down or number keys 1-11, then press Enter. Accepted direct values are
+`double-coins`, `score-bonus`, `hp-drain-reduction`, `revive`,
+`crush-chance`, `base-speed`, `gold-coin-magic`,
+`collision-damage-reduction`, `potion-hp`, `magnetic-aura`, and `pit-lifts`.
+Before Multi-Buy, the runner unchecks every other boost and verifies that only
+the requested boost remains checked.
 
 ### How `levels` mode stays in sync
 
