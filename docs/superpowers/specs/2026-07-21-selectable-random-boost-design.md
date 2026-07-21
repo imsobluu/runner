@@ -46,7 +46,9 @@ Invalid explicit values, Escape, and unavailable interactive console input fail 
 
 Multiple boosts may initially be checked. The helper toggles every checked boost other than the requested one off and toggles the requested boost on when necessary. It then captures the modal again and verifies that the complete checked set is exactly `{requested boost}`. Multi-Buy is not tapped unless this invariant holds.
 
-After Multi-Buy, the helper waits for the selection modal to close and the boost store to reappear. Any missing screen, failed tap, ambiguous checkbox state, incorrect final checked set, or missing return to the boost store raises `RunnerError`.
+Multi-Buy repeatedly rolls among the selected boosts until the requested boost is obtained. The existing boost-store templates do not describe that lifecycle, so they are not a valid completion signal.
+
+After tapping Multi-Buy, the helper first waits for `stop.png` to appear, proving that rolling started. It then waits up to 120 seconds for `stop.png` to disappear, proving that rolling finished. Requiring the appearance transition prevents an initial frame without the Stop button from being mistaken for successful completion. Any missing screen, failed tap, ambiguous checkbox state, incorrect final checked set, failure to start rolling, or failure to finish rolling raises `RunnerError` with a stage-specific message.
 
 ## Run Flow
 
@@ -64,6 +66,8 @@ Extend `scripts/test_auto_runner.py` with focused checks for:
 - `run_once()` forwarding the selected value to `ensure_random_boost_setup()`;
 - checkbox reconciliation unchecking all undesired boosts, checking the desired boost, and accepting an already-correct modal without extra taps;
 - verification rejecting ambiguous states or any final checked set other than the requested singleton;
-- the setup sequence tapping Multi-Buy only after checkbox verification succeeds.
+- the setup sequence tapping Multi-Buy only after checkbox verification succeeds;
+- post-purchase confirmation waiting for Stop to appear before waiting for it to disappear;
+- failure paths when Stop never appears or remains visible past the completion timeout.
 
 No new dependency, OCR path, per-boost image set, or generic policy abstraction is added.
