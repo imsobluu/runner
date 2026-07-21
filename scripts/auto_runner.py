@@ -16,7 +16,6 @@ from avd_runner.menu import (
     is_toggle_selected,
     tap_template,
     wait_for_any_template,
-    wait_for_template,
 )
 from avd_runner.mystery_box import (
     MysteryBoxCapture,
@@ -57,7 +56,6 @@ MULTI_BUTTON_TEMPLATE = ASSETS / "multi_button.png"
 MULTI_BUY_BUTTON_TEMPLATE = ASSETS / "multi_buy_button.png"
 CHECKBOX_TEMPLATE = ASSETS / "checkbox.png"
 CHECKMARK_TEMPLATE = ASSETS / "checkmark.png"
-DOUBLE_COINS_BANNER_TEMPLATE = ASSETS / "double_coins_banner.png"
 FAST_START_0_TEMPLATE = ASSETS / "fast_start_0.png"
 COOKIE_RELAY_0_TEMPLATE = ASSETS / "cookie_relay_0.png"
 DOUBLE_XP_TEMPLATE = ASSETS / "double_xp.png"
@@ -107,7 +105,7 @@ PLAY_WITH_DOUBLE_COINS_TARGET = TemplateTarget(
 RANDOM_BOOST_TARGET = TemplateTarget("Random Boost", RANDOM_BOOST_TEMPLATE)
 MULTI_TARGET = TemplateTarget("Multi", MULTI_BUTTON_TEMPLATE)
 MULTI_BUY_TARGET = TemplateTarget("Multi Buy", MULTI_BUY_BUTTON_TEMPLATE)
-FAST_START_0_TARGET = TemplateTarget("Fast Start 0", FAST_START_0_TEMPLATE, threshold=0.99, attempts=1)
+FAST_START_0_TARGET = TemplateTarget("Fast Start 0", FAST_START_0_TEMPLATE, threshold=0.98, attempts=1)
 COOKIE_RELAY_0_TARGET = TemplateTarget("Cookie Relay 0", COOKIE_RELAY_0_TEMPLATE, threshold=0.98, attempts=1)
 DOUBLE_XP_TARGET = TemplateTarget("Double XP", DOUBLE_XP_TEMPLATE, attempts=1)
 POWER_JELLY_BOOST_TARGET = TemplateTarget("Power Jelly Boost", POWER_JELLY_BOOST_TEMPLATE, attempts=1)
@@ -538,8 +536,6 @@ def buy_boost_if_available(ctx: AutoRunnerContext, select) -> None:
         return
     if not tap_boost_buy_button(ctx):
         raise RunnerError()
-    if not wait_for_template(ctx, "Double Coins Banner", DOUBLE_COINS_BANNER_TEMPLATE, CAPTCHA_BANNER_TEMPLATE):
-        raise RunnerError()
 
 
 def _checkbox_is_checked(crop) -> bool:
@@ -615,6 +611,7 @@ def ensure_random_boost_setup(ctx: AutoRunnerContext, desired: str) -> None:
         raise RunnerError("Could not select Random Boost.")
     if not tap_multi_button(ctx):
         raise RunnerError("Could not open Multi selection.")
+    wait(0.5)
     reconcile_random_boost_checkboxes(ctx, desired)
     if not tap_multi_buy_button(ctx):
         raise RunnerError("Could not tap Multi-Buy.")
