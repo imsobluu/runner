@@ -154,13 +154,26 @@ else:
 
 setup_order = []
 original_wait_for_any_template = auto_runner.wait_for_any_template
+original_wait_for_template = auto_runner.wait_for_template
+original_wait_template_gone = auto_runner.wait_template_gone
 original_tap_random_boost_button = auto_runner.tap_random_boost_button
 original_tap_multi_button = auto_runner.tap_multi_button
 original_reconcile = auto_runner.reconcile_random_boost_checkboxes
 original_tap_multi_buy_button = auto_runner.tap_multi_buy_button
 try:
-    screens = iter(["Random Boost", "Random Boost Selected"])
-    auto_runner.wait_for_any_template = lambda *_args, **_kwargs: next(screens)
+    auto_runner.wait_for_any_template = lambda *_args, **_kwargs: "Random Boost"
+    auto_runner.wait_for_template = (
+        lambda _ctx, name, path, _banner, **_kwargs: setup_order.append(
+            ("wait-present", name, path)
+        )
+        or True
+    )
+    auto_runner.wait_template_gone = (
+        lambda _ctx, path, threshold, _banner, **kwargs: setup_order.append(
+            ("wait-gone", path, threshold, kwargs["timeout"])
+        )
+        or True
+    )
     auto_runner.tap_random_boost_button = lambda _ctx: setup_order.append("random") or True
     auto_runner.tap_multi_button = lambda _ctx: setup_order.append("multi") or True
     auto_runner.reconcile_random_boost_checkboxes = (
@@ -173,10 +186,28 @@ try:
         "multi",
         ("reconcile", "magnetic-aura"),
         "buy",
+        ("wait-present", "Stop", auto_runner.STOP_TEMPLATE),
+        ("wait-gone", auto_runner.STOP_TEMPLATE, 0.85, 120.0),
     ]
 
+    auto_runner.wait_for_template = lambda *_args, **_kwargs: False
+    try:
+        auto_runner.ensure_random_boost_setup(ctx, "magnetic-aura")
+    except auto_runner.RunnerError as exc:
+        assert str(exc) == "Random Boost rolling did not start."
+    else:
+        raise AssertionError("missing Stop button should fail setup")
+
+    auto_runner.wait_for_template = lambda *_args, **_kwargs: True
+    auto_runner.wait_template_gone = lambda *_args, **_kwargs: False
+    try:
+        auto_runner.ensure_random_boost_setup(ctx, "magnetic-aura")
+    except auto_runner.RunnerError as exc:
+        assert str(exc) == "Random Boost rolling did not finish."
+    else:
+        raise AssertionError("persistent Stop button should fail setup")
+
     setup_order.clear()
-    screens = iter(["Random Boost"])
     auto_runner.reconcile_random_boost_checkboxes = (
         lambda _ctx, _boost: (_ for _ in ()).throw(auto_runner.RunnerError())
     )
@@ -189,6 +220,8 @@ try:
     assert "buy" not in setup_order
 finally:
     auto_runner.wait_for_any_template = original_wait_for_any_template
+    auto_runner.wait_for_template = original_wait_for_template
+    auto_runner.wait_template_gone = original_wait_template_gone
     auto_runner.tap_random_boost_button = original_tap_random_boost_button
     auto_runner.tap_multi_button = original_tap_multi_button
     auto_runner.reconcile_random_boost_checkboxes = original_reconcile

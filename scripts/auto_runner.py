@@ -16,6 +16,8 @@ from avd_runner.menu import (
     is_toggle_selected,
     tap_template,
     wait_for_any_template,
+    wait_for_template,
+    wait_template_gone,
 )
 from avd_runner.mystery_box import (
     MysteryBoxCapture,
@@ -54,6 +56,7 @@ RANDOM_BOOST_TEMPLATE = ASSETS / "random_boost.png"
 RANDOM_BOOST_SELECTED_TEMPLATE = ASSETS / "random_boost_selected.png"
 MULTI_BUTTON_TEMPLATE = ASSETS / "multi_button.png"
 MULTI_BUY_BUTTON_TEMPLATE = ASSETS / "multi_buy_button.png"
+STOP_TEMPLATE = ASSETS / "stop.png"
 CHECKBOX_TEMPLATE = ASSETS / "checkbox.png"
 CHECKMARK_TEMPLATE = ASSETS / "checkmark.png"
 FAST_START_0_TEMPLATE = ASSETS / "fast_start_0.png"
@@ -615,15 +618,23 @@ def ensure_random_boost_setup(ctx: AutoRunnerContext, desired: str) -> None:
     reconcile_random_boost_checkboxes(ctx, desired)
     if not tap_multi_buy_button(ctx):
         raise RunnerError("Could not tap Multi-Buy.")
-    if wait_for_any_template(
+    if not wait_for_template(
         ctx,
-        [
-            ("Random Boost Selected", RANDOM_BOOST_SELECTED_TEMPLATE),
-            ("Random Boost", RANDOM_BOOST_TEMPLATE),
-        ],
+        "Stop",
+        STOP_TEMPLATE,
         CAPTCHA_BANNER_TEMPLATE,
-    ) is None:
-        raise RunnerError("Boost store did not reappear after Multi-Buy.")
+        attempts=20,
+        delay_seconds=0.25,
+    ):
+        raise RunnerError("Random Boost rolling did not start.")
+    if not wait_template_gone(
+        ctx,
+        STOP_TEMPLATE,
+        0.85,
+        CAPTCHA_BANNER_TEMPLATE,
+        timeout=120.0,
+    ):
+        raise RunnerError("Random Boost rolling did not finish.")
 
 
 def buy_optional_boosts(ctx: AutoRunnerContext, skip_top_row_boosts: bool) -> None:
