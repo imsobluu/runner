@@ -792,7 +792,7 @@ def close_all_modals(
 
     started = time.monotonic()
     progress_deadline = started + timeout_seconds
-    scan_until = started + min(8.0, timeout_seconds)
+    scan_until = started + min(10.0, timeout_seconds)
     clear_since: float | None = None
     modal_visible = False
 
