@@ -103,8 +103,8 @@ PLAY_TARGET = TemplateTarget("Play", PLAY_BUTTON_TEMPLATE)
 RANDOM_BOOST_TARGET = TemplateTarget("Random Boost", RANDOM_BOOST_TEMPLATE)
 MULTI_TARGET = TemplateTarget("Multi", MULTI_BUTTON_TEMPLATE)
 MULTI_BUY_TARGET = TemplateTarget("Multi Buy", MULTI_BUY_BUTTON_TEMPLATE)
-FAST_START_0_TARGET = TemplateTarget("Fast Start 0", FAST_START_0_TEMPLATE, threshold=0.98, attempts=1)
-COOKIE_RELAY_0_TARGET = TemplateTarget("Cookie Relay 0", COOKIE_RELAY_0_TEMPLATE, threshold=0.98, attempts=1)
+FAST_START_0_TARGET = TemplateTarget("Fast Start 0", FAST_START_0_TEMPLATE, threshold=0.97, attempts=1)
+COOKIE_RELAY_0_TARGET = TemplateTarget("Cookie Relay 0", COOKIE_RELAY_0_TEMPLATE, threshold=0.97, attempts=1)
 DOUBLE_XP_TARGET = TemplateTarget("Double XP", DOUBLE_XP_TEMPLATE, attempts=1)
 POWER_JELLY_BOOST_TARGET = TemplateTarget("Power Jelly Boost", POWER_JELLY_BOOST_TEMPLATE, attempts=1)
 HP_EXTENSION_TARGET = TemplateTarget("HP Extension", HP_EXTENSION_TEMPLATE, attempts=1)
@@ -461,6 +461,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Skip top row boost checks.",
     )
     parser.add_argument(
+        "--skip-relic-claim",
+        action="store_true",
+        help="Skip relic claim.",
+    )
+    parser.add_argument(
         "--random-boost",
         nargs="?",
         const="",
@@ -646,7 +651,9 @@ def quit_gameplay(ctx: AutoRunnerContext) -> None:
 
 
 def run_once(ctx: AutoRunnerContext, args: argparse.Namespace) -> None:
-    claim_relic_if_alert(ctx)
+    if not args.skip_relic_claim:
+        claim_relic_if_alert(ctx)
+        
     if not tap_play_button(ctx):
         raise RunnerError()
 
@@ -656,6 +663,7 @@ def run_once(ctx: AutoRunnerContext, args: argparse.Namespace) -> None:
         ensure_random_boost_setup(ctx, args.random_boost)
 
     buy_optional_boosts(ctx, args.skip_top_row_boosts)
+    wait(1.0)
     run_after_start(
         ctx,
         args.mode,
